@@ -13,6 +13,78 @@
   --danger: #ff7b72;
   --radius: 12px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  /* 하단 네비 높이 — 모바일에서 본문이 가려지지 않게 (§16, §46) */
+  --nav-h: 0px;
+  /* 상태색 토큰 — 테마마다 다시 정의합니다 (§36) */
+  --ok-bg: #12251d;      --ok-line: #2b7d5d;   --ok-text: #cfeee0;
+  --warn-bg: #251f12;    --warn-line: #5c4a2d; --warn-text: #f2ddb8;
+  --danger-bg: #1d1414;  --danger-line: #5c2d2d; --danger-text: #ffb1ab;
+  --stage-bg: #05070a;
+  --btn-hover: #242e3d;
+  --primary: #2b4d86;    --primary-line: #38609f; --primary-hover: #335a9c;
+  --accent-btn: #1f5f47; --accent-btn-hover: #256e51;
+  --picked-bg: #15243c;
+}
+
+/*
+ * 라이트 테마 (§36).
+ * 기본은 다크이고, 다음 두 경우에 라이트로 바뀝니다.
+ *   1) 사용자가 라이트를 고른 경우        → [data-theme="light"]
+ *   2) 테마를 "시스템 설정"으로 둔 경우   → data-theme 속성이 없고 OS 가 밝은 모드
+ * 사용자가 다크를 고르면 OS 가 밝아도 다크를 유지해야 하므로,
+ * 미디어 쿼리 쪽은 :not([data-theme]) 로 좁힙니다.
+ */
+:root[data-theme="light"],
+:root:not([data-theme]) {
+  /* 여기서는 아무것도 바꾸지 않습니다 — 아래 두 규칙이 실제 값을 정합니다. */
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    color-scheme: light;
+    --bg: #f6f8fb;
+    --bg-soft: #ffffff;
+    --panel: #ffffff;
+    --panel-2: #eef2f7;
+    --line: #d7dee8;
+    --text: #17202b;
+    --muted: #5c6b7c;
+    --accent: #1f6feb;
+    --accent-2: #0f7a53;
+    --warn: #9a6212;
+    --danger: #c0392b;
+    --ok-bg: #e6f6ee;      --ok-line: #7fc9a8;   --ok-text: #14523a;
+    --warn-bg: #fdf2dd;    --warn-line: #d8b271; --warn-text: #6b4a12;
+    --danger-bg: #fdeaea;  --danger-line: #e2a6a0; --danger-text: #8c2119;
+    --stage-bg: #0d1117;
+    --btn-hover: #e2e8f1;
+    --primary: #1f6feb;    --primary-line: #1a5fce; --primary-hover: #1a5fce;
+    --accent-btn: #0f7a53; --accent-btn-hover: #0c6644;
+    --picked-bg: #e3edfd;
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f6f8fb;
+  --bg-soft: #ffffff;
+  --panel: #ffffff;
+  --panel-2: #eef2f7;
+  --line: #d7dee8;
+  --text: #17202b;
+  --muted: #5c6b7c;
+  --accent: #1f6feb;
+  --accent-2: #0f7a53;
+    --warn: #9a6212;
+  --danger: #c0392b;
+  --ok-bg: #e6f6ee;      --ok-line: #7fc9a8;   --ok-text: #14523a;
+  --warn-bg: #fdf2dd;    --warn-line: #d8b271; --warn-text: #6b4a12;
+  --danger-bg: #fdeaea;  --danger-line: #e2a6a0; --danger-text: #8c2119;
+  --stage-bg: #0d1117;
+  --btn-hover: #e2e8f1;
+  --primary: #1f6feb;    --primary-line: #1a5fce; --primary-hover: #1a5fce;
+  --accent-btn: #0f7a53; --accent-btn-hover: #0c6644;
+  --picked-bg: #e3edfd;
 }
 
 * { box-sizing: border-box; }
@@ -73,7 +145,7 @@ kbd {
 }
 .badge:hover { border-color: var(--accent); }
 .badge .mono { color: var(--muted); }
-.badge-warn { border-color: #5c4a2d; background: #251f12; color: var(--warn); }
+.badge-warn { border-color: var(--warn-line); background: var(--warn-bg); color: var(--warn); }
 
 .status {
   font-size: 12.5px;
@@ -83,9 +155,9 @@ kbd {
   white-space: nowrap;
 }
 .status-idle { color: var(--muted); }
-.status-live { color: var(--accent-2); border-color: #2d5c4a; background: #12251d; }
-.status-busy { color: var(--warn); border-color: #5c4a2d; background: #251f12; }
-.status-error { color: var(--danger); border-color: #5c2d2d; background: #251414; }
+.status-live { color: var(--accent-2); border-color: var(--ok-line); background: var(--ok-bg); }
+.status-busy { color: var(--warn); border-color: var(--warn-line); background: var(--warn-bg); }
+.status-error { color: var(--danger); border-color: var(--danger-line); background: var(--danger-bg); }
 
 /* ── 레이아웃 ───────────────────────── */
 .layout {
@@ -126,7 +198,7 @@ kbd {
 /* ── 캡처 화면 ───────────────────────── */
 .stage {
   position: relative;
-  background: #05070a;
+  background: var(--stage-bg);
   aspect-ratio: 16 / 9;
   max-height: 46vh;
   display: flex;
@@ -218,12 +290,12 @@ body[data-mode="idle"] .stage {
   white-space: nowrap;
   transition: background .12s, border-color .12s, opacity .12s;
 }
-.btn:hover:not(:disabled) { background: #242e3d; }
+.btn:hover:not(:disabled) { background: var(--btn-hover); }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
-.btn-primary { background: #2b4d86; border-color: #38609f; }
-.btn-primary:hover:not(:disabled) { background: #335a9c; }
-.btn-accent { background: #1f5f47; border-color: #2b7d5d; }
-.btn-accent:hover:not(:disabled) { background: #256e51; }
+.btn-primary { background: var(--primary); border-color: var(--primary-line); }
+.btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+.btn-accent { background: var(--accent-btn); border-color: var(--ok-line); }
+.btn-accent:hover:not(:disabled) { background: var(--accent-btn-hover); }
 .btn-ghost { background: transparent; }
 
 .input, .select {
@@ -273,8 +345,8 @@ textarea.input { resize: vertical; font-family: inherit; }
 .answer th, .answer td { border: 1px solid var(--line); padding: 5px 9px; font-size: 13.5px; }
 
 .filled-in {
-  background: #12251d;
-  border: 1px solid #2b7d5d;
+  background: var(--ok-bg);
+  border: 1px solid var(--ok-line);
   border-radius: 10px;
   padding: 9px 14px;
   margin: 0 0 12px;
@@ -329,9 +401,9 @@ textarea.input { resize: vertical; font-family: inherit; }
   line-height: 1.5;
 }
 .calc-note .label { display: block; font-size: 11px; letter-spacing: .03em; margin-bottom: 2px; }
-.calc-note.ok { background: #12251d; border: 1px solid #2b7d5d; color: #cfeee0; }
+.calc-note.ok { background: var(--ok-bg); border: 1px solid var(--ok-line); color: var(--ok-text); }
 .calc-note.ok .label { color: var(--accent-2); }
-.calc-note.bad { background: #251f12; border: 1px solid #5c4a2d; color: #f2ddb8; }
+.calc-note.bad { background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn-text); }
 .calc-note.bad .label { color: var(--warn); }
 
 /* 맨 아래 최종 정리 카드 — 길게 스크롤한 뒤에도 답을 다시 봅니다 */
@@ -379,9 +451,9 @@ textarea.input { resize: vertical; font-family: inherit; }
   border-radius: 999px;
   border: 1px solid var(--line);
 }
-.confidence.high { color: var(--accent-2); border-color: #2b7d5d; }
+.confidence.high { color: var(--accent-2); border-color: var(--ok-line); }
 .confidence.mid { color: var(--muted); }
-.confidence.low { color: var(--warn); border-color: #5c4a2d; }
+.confidence.low { color: var(--warn); border-color: var(--warn-line); }
 
 /* 결과 액션 (§59) */
 .result-actions {
@@ -409,8 +481,8 @@ textarea.input { resize: vertical; font-family: inherit; }
 }
 
 .final-answer {
-  background: linear-gradient(180deg, #163a2c, #12251d);
-  border: 1px solid #2b7d5d;
+  background: linear-gradient(180deg, var(--accent-btn), var(--ok-bg));
+  border: 1px solid var(--ok-line);
   border-radius: 10px;
   padding: 10px 14px;
   margin: 0 0 12px;
@@ -424,11 +496,11 @@ textarea.input { resize: vertical; font-family: inherit; }
 .steps li { margin-bottom: 6px; }
 
 .error-box {
-  border: 1px solid #5c2d2d; background: #1d1414; color: #ffb1ab;
+  border: 1px solid var(--danger-line); background: var(--danger-bg); color: var(--danger-text);
   border-radius: 9px; padding: 10px 14px; margin-bottom: 10px; font-size: 13.5px;
   white-space: pre-line;   /* 오류 안내의 줄바꿈을 살립니다 */
 }
-.error-box code { background: #2a1a1a; border-color: #5c2d2d; }
+.error-box code { background: var(--danger-bg); border-color: var(--danger-line); }
 .retry-btn { display: block; margin-top: 10px; }
 
 .caret {
@@ -500,9 +572,9 @@ details.field[open] { gap: 12px; }
   color: var(--muted); font-style: normal;
 }
 .provider-cost.free { color: var(--accent-2); }
-.provider-opt:hover .provider-card { border-color: #3c4a5d; }
+.provider-opt:hover .provider-card { border-color: var(--btn-hover); }
 .provider-opt input:checked + .provider-card {
-  border-color: var(--accent); background: #15243c;
+  border-color: var(--accent); background: var(--picked-bg);
 }
 .provider-opt input:focus-visible + .provider-card { outline: 2px solid var(--accent); outline-offset: 2px; }
 .key-flag {
@@ -510,7 +582,7 @@ details.field[open] { gap: 12px; }
   color: var(--muted); border: 1px solid var(--line);
   border-radius: 999px; padding: 1px 7px; align-self: flex-start;
 }
-.key-flag.ok { color: var(--accent-2); border-color: #2b7d5d; background: #12251d; }
+.key-flag.ok { color: var(--accent-2); border-color: var(--ok-line); background: var(--ok-bg); }
 
 .key-row { display: flex; gap: 6px; align-items: center; }
 .key-row .input { flex: 1; }
@@ -579,8 +651,8 @@ details.field[open] { gap: 12px; }
   .answer { padding: 14px; }
   .answer-scroll { min-height: 140px; }
   .filled-in {
-  background: #12251d;
-  border: 1px solid #2b7d5d;
+  background: var(--ok-bg);
+  border: 1px solid var(--ok-line);
   border-radius: 10px;
   padding: 9px 14px;
   margin: 0 0 12px;
@@ -622,6 +694,144 @@ details.field[open] { gap: 12px; }
 /* 마우스가 없는 기기에서는 hover 잔상이 남지 않도록 */
 @media (hover: none) {
   .btn:hover:not(:disabled) { background: var(--panel-2); }
-  .btn-primary:hover:not(:disabled) { background: #2b4d86; }
-  .btn-accent:hover:not(:disabled) { background: #1f5f47; }
+  .btn-primary:hover:not(:disabled) { background: var(--primary); }
+  .btn-accent:hover:not(:disabled) { background: var(--accent-btn); }
+}
+
+/* ── 풀이 진행 단계 (§20) ─────────────── */
+.progress {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 8px 14px; border-bottom: 1px solid var(--line);
+  background: var(--panel-2);
+}
+.progress-step {
+  font-size: 11.5px; color: var(--muted);
+  padding: 3px 9px; border-radius: 999px;
+  border: 1px solid transparent;
+}
+.progress-step.done { color: var(--accent-2); }
+.progress-step.now {
+  color: var(--text); background: var(--bg-soft);
+  border-color: var(--accent);
+}
+
+/* ── 보기 방식 탭 (§10) ───────────────── */
+.view-tabs {
+  display: flex; gap: 4px; padding: 8px 14px 0;
+}
+.view-tabs button {
+  font: inherit; font-size: 13px; cursor: pointer;
+  padding: 8px 14px; min-height: 40px;
+  border: 1px solid var(--line); border-bottom: 0;
+  border-radius: 9px 9px 0 0;
+  background: var(--panel-2); color: var(--muted);
+}
+.view-tabs button[aria-selected="true"] {
+  background: var(--panel); color: var(--text); border-color: var(--accent);
+}
+
+/*
+ * 보기 방식에 따라 감춥니다. 실제 내용을 지우는 게 아니라 표시만 바꾸므로,
+ * 탭을 되돌리면 그대로 다시 보입니다.
+ */
+body[data-view="answer"] .sol-section,
+body[data-view="answer"] .final-card,
+body[data-view="answer"] .answer > p,
+body[data-view="answer"] .answer > ul,
+body[data-view="answer"] .answer > ol { display: none; }
+
+body[data-view="steps"] .sol-section[data-key="easy"],
+body[data-view="steps"] .sol-section[data-key="caution"],
+body[data-view="steps"] .sol-section[data-key="choices"],
+body[data-view="steps"] .sol-section[data-key="concept"] { display: none; }
+
+/* ── 오답노트 (§25) ───────────────────── */
+.notes { list-style: none; margin: 0; padding: 10px; display: grid; gap: 10px; overflow-y: auto; }
+.note-item { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--panel-2); }
+.note-head { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
+.note-head strong { font-size: 14px; }
+.note-meta { font-size: 11.5px; color: var(--muted); }
+.note-body { font-size: 13px; display: grid; gap: 4px; }
+.note-body img { width: 100%; max-width: 180px; border-radius: 8px; }
+.note-body b { color: var(--accent-2); font-weight: 500; margin-right: 4px; }
+.note-reason b { color: var(--warn); }
+.note-actions { display: flex; gap: 6px; margin-top: 8px; }
+
+/* ── 기록 도구 (§26) ──────────────────── */
+.history-tools {
+  display: flex; gap: 6px; padding: 8px 10px;
+  border-bottom: 1px solid var(--line); flex-wrap: wrap;
+}
+.history-tools .input { flex: 1 1 130px; min-width: 0; }
+.history-tools .select { flex: 0 0 auto; }
+.history-noimg {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; aspect-ratio: 16/9; background: var(--stage-bg);
+  font-size: 20px; opacity: .5;
+}
+
+/* ── 연결 테스트 · 디버그 (§38, §60) ──── */
+.test-result { font-size: 12.5px; align-self: center; }
+.test-result.ok { color: var(--accent-2); }
+.test-result.bad { color: var(--danger); }
+.test-result.testing { color: var(--muted); }
+.key-warning { display: block; margin: -4px 0 10px; line-height: 1.6; }
+.checkbox-field { flex-direction: row; align-items: center; gap: 8px; }
+.checkbox-field input { width: 18px; height: 18px; }
+.debug-line {
+  margin-top: 12px; padding-top: 8px; border-top: 1px dashed var(--line);
+  font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+}
+.error-detail { margin-top: 8px; }
+.error-detail summary { cursor: pointer; font-size: 12px; }
+.error-detail pre {
+  margin: 6px 0 0; padding: 8px; border-radius: 8px;
+  background: var(--bg-soft); color: var(--muted);
+  font-size: 11.5px; white-space: pre-wrap; word-break: break-all;
+  max-height: 160px; overflow: auto;
+}
+.retry-btn { margin-top: 10px; }
+
+/* ── 모바일 하단 네비게이션 (§46) ─────── */
+.bottom-nav { display: none; }
+
+@media (max-width: 940px) {
+  :root { --nav-h: 62px; }
+
+  .bottom-nav {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+    background: var(--bg-soft);
+    border-top: 1px solid var(--line);
+    /* 홈 인디케이터·노치 대응 (§16) */
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .bottom-nav button {
+    font: inherit; font-size: 11px; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 2px; min-height: 56px; padding: 6px 2px;
+    border: 0; background: none; color: var(--muted);
+  }
+  .bottom-nav button span { font-size: 19px; line-height: 1; }
+  .bottom-nav button[aria-current="true"] { color: var(--accent); }
+
+  /* 하단 네비에 본문이 가리지 않도록 */
+  body { padding-bottom: var(--nav-h); }
+
+  /* 터치 목표를 최소 44px 로 (§16, §35) */
+  .btn { min-height: 44px; padding: 10px 14px; }
+  .source-tabs button { min-height: 44px; padding: 10px 12px; }
+  .badge { min-height: 44px; }
+  .head-actions { gap: 8px; }
+  /* 좁은 화면에서 버튼 줄이 잘리지 않게 가로 스크롤을 허용합니다 */
+  .panel-head { flex-wrap: wrap; }
+  .head-actions { flex-wrap: wrap; }
+}
+
+/* 키보드 접근성 — 색만으로 상태를 구분하지 않습니다 (§35) */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
 }

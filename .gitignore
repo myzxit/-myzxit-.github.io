@@ -1,0 +1,12 @@
+# 비밀 값 — 절대 커밋하지 않습니다 (§2-C)
+.env
+.env.*
+!.env.example
+
+# Netlify
+.netlify/
+
+# 도구·에디터
+node_modules/
+.DS_Store
+*.log

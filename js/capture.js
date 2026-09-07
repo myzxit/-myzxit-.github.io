@@ -5,6 +5,56 @@ const THUMB = 40; // 변화 감지용 축소 크기
 export const SCREEN_SUPPORTED = !!navigator.mediaDevices?.getDisplayMedia;
 export const CAMERA_SUPPORTED = !!navigator.mediaDevices?.getUserMedia;
 
+
+/**
+ * 사진을 화면·전송에 쓰기 좋은 형태로 정리합니다. (§5)
+ *
+ * - EXIF 방향 보정: 폰으로 세로 촬영한 사진이 눕는 문제를 막습니다.
+ *   최신 브라우저는 <img> 에 자동 적용하지만 구형 WebView 는 그렇지 않아,
+ *   여기서 픽셀 자체를 바로 세워 둡니다.
+ * - 지나치게 큰 사진을 미리 줄여 메모리 사용과 전송량을 낮춥니다. (§42)
+ *
+ * createImageBitmap 을 쓸 수 없는 환경에서는 원본을 그대로 돌려줍니다
+ * (기능이 사라지는 것보다 낫습니다).
+ */
+export async function normalizePhoto(file, maxWidth = 2400) {
+  const readAsDataUrl = () => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('사진을 읽지 못했습니다.'));
+    reader.readAsDataURL(file);
+  });
+
+  if (typeof createImageBitmap !== 'function') return readAsDataUrl();
+
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  } catch {
+    try {
+      bitmap = await createImageBitmap(file);   // 옵션 미지원 브라우저
+    } catch {
+      return readAsDataUrl();                   // 디코딩 자체를 못 하면 원본으로
+    }
+  }
+
+  try {
+    const scale = Math.min(1, maxWidth / bitmap.width);
+    const w = Math.max(1, Math.round(bitmap.width * scale));
+    const h = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, w, h);
+    return canvas.toDataURL('image/jpeg', 0.9);
+  } catch {
+    return readAsDataUrl();
+  } finally {
+    // 비트맵은 GC 를 기다리지 않고 즉시 해제합니다. (§41)
+    bitmap.close?.();
+  }
+}
+
 export class Capture {
   /**
    * @param {HTMLVideoElement} video 화면공유·카메라 미리보기
@@ -163,13 +213,8 @@ export class Capture {
   }
 
   /** 사진(파일/촬영) 한 장을 소스로 설정합니다. */
-  async setPhoto(file) {
-    const dataUrl = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = () => reject(new Error('사진을 읽지 못했습니다.'));
-      reader.readAsDataURL(file);
-    });
+  async setPhoto(file, maxWidth = 2400) {
+    const dataUrl = await normalizePhoto(file, maxWidth);
     await this.#showStill(dataUrl, '사진을 표시하지 못했습니다.');
     this.stopStream();
     this.mode = 'photo';

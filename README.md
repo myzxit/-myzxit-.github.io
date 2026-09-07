@@ -190,6 +190,11 @@ js/prompt.js            문제 풀이용 시스템 프롬프트
 js/markdown.js          답변 표시용 마크다운 렌더러 (HTML 이스케이프) + 풀이 블록 파싱
 js/calc.js              계산 검증 엔진 — AI 계산을 앱이 다시 검산 (eval 미사용)
 js/history.js           푼 문제 기록·세션 기억의 영구 저장 (키는 저장하지 않음)
+js/wrongnotes.js        오답노트 — 복습용 저장 (새로 시작해도 지워지지 않음)
+js/proxy.js             서버 프록시 감지 (없으면 직접 호출로 자동 전환)
+netlify/functions/      서버 프록시 — 키를 서버 환경변수에만 두는 경로
+netlify.toml            Netlify 배포·함수 설정
+.env.example            서버 프록시용 환경변수 이름 예시 (실제 키 없음)
 sw.js                   서비스 워커 — 공유 대상 처리 + 네트워크 우선 캐시
 manifest.webmanifest    PWA 매니페스트 (share_target 선언)
 icons/                  앱 아이콘 (192/512 PNG)
@@ -255,6 +260,7 @@ android/                        Android 앱 (폰 전체 화면 실시간 분석)
 
 ## 개인정보 · 주의
 
+- **서버 프록시 모드**: Netlify에 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` 환경변수를 넣으면, 브라우저는 키를 전혀 모르는 상태로 `/api/ai` 를 통해 요청합니다. 환경변수가 없으면 기존처럼 사용자가 직접 키를 입력하는 방식으로 동작합니다(사이트가 죽지 않습니다).
 - 설정은 기기에만 저장되며 서버로 전송되지 않습니다. **API 키**는 앱에서 Android **Keystore** 로 암호화해 보관하고(설정 JSON 에는 남기지 않습니다), 웹 브라우저에서는 `localStorage` 에 저장됩니다.
 - 캡처 이미지는 **선택한 프로바이더의 API로만** 전송됩니다. 키는 브라우저에서 직접 API로 전달되므로, 공용 PC에서는 사용 후 🗑 버튼으로 키를 지우세요.
 - 모델 출력은 항상 이스케이프 후 렌더링하므로 답변에 포함된 HTML이 실행되지 않습니다.

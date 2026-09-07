@@ -1,5 +1,10 @@
-import { PROVIDERS, loadSettings, saveSettings, activeConfig, secureKeysAvailable } from './store.js';
-import { streamCompletion } from './api.js';
+import {
+  PROVIDERS, loadSettings, saveSettings, activeConfig, secureKeysAvailable,
+  forgetAllKeys, modelOptions,
+} from './store.js';
+import { streamCompletion, testConnection } from './api.js';
+import { probeProxy, proxyStatus, proxyHasKey } from './proxy.js';
+import { loadNotes, addNote, removeNote, clearNotes, hasNote, notesSizeKb } from './wrongnotes.js';
 import { Capture, SCREEN_SUPPORTED, CAMERA_SUPPORTED, diffPercent, splitDataUrl } from './capture.js';
 import { renderMarkdown, splitFinalAnswer, parseSolution } from './markdown.js';
 import { buildSystemPrompt, SOLVE_INSTRUCTION, ACTIONS } from './prompt.js';
@@ -69,6 +74,28 @@ const el = {
   keyLabel: $('key-label'),
   keyLink: $('key-link'),
   keyStorage: $('key-storage'),
+  btnTestKey: $('btn-test-key'),
+  keyTestResult: $('key-test-result'),
+  proxyNote: $('proxy-note'),
+  rememberKeys: $('remember-keys'),
+  keyExpiry: $('key-expiry'),
+  btnRefreshModels: $('btn-refresh-models'),
+  customModel: $('custom-model'),
+  btnAddModel: $('btn-add-model'),
+  preferProxy: $('prefer-proxy'),
+  debugMode: $('debug-mode'),
+  btnTheme: $('btn-theme'),
+  progress: $('progress'),
+  viewTabs: $('view-tabs'),
+  bottomNav: $('bottom-nav'),
+  panelHistory: $('panel-history'),
+  panelNotes: $('panel-notes'),
+  notes: $('notes'),
+  notesSize: $('notes-size'),
+  btnClearNotes: $('btn-clear-notes'),
+  historySearch: $('history-search'),
+  historySubject: $('history-subject'),
+  historySort: $('history-sort'),
   btnReveal: $('btn-reveal'),
   btnForget: $('btn-forget'),
   model: $('model'),
@@ -202,9 +229,54 @@ const state = {
   pendingFollowup: null,
   awaitingNetwork: false,
   lastImage: null,
+  lastDebug: null,
   history: [],
   activeHistory: null,
 };
+
+/* ── 화면 테마 (§36) ───────────────────────────── */
+const THEME_ORDER = ['system', 'dark', 'light'];
+const THEME_ICON = { system: '⚙️', dark: '🌙', light: '☀️' };
+const THEME_NAME = { system: '시스템 설정', dark: '다크', light: '라이트' };
+
+function applyTheme() {
+  const t = THEME_ORDER.includes(settings.theme) ? settings.theme : 'system';
+  // system 이면 속성을 지워 prefers-color-scheme 가 그대로 동작하게 둡니다.
+  if (t === 'system') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', t);
+  if (el.btnTheme) {
+    el.btnTheme.textContent = THEME_ICON[t];
+    el.btnTheme.title = `화면 테마: ${THEME_NAME[t]} (눌러서 변경)`;
+    el.btnTheme.setAttribute('aria-label', `화면 테마 ${THEME_NAME[t]}. 눌러서 변경`);
+  }
+}
+
+/* ── 풀이 진행 단계 (§20) ──────────────────────── */
+const PROGRESS_STEPS = ['image', 'read', 'solve', 'verify', 'done'];
+
+function setProgress(step) {
+  if (!el.progress) return;
+  if (!step) { el.progress.hidden = true; return; }
+  el.progress.hidden = false;
+  const at = PROGRESS_STEPS.indexOf(step);
+  for (const node of el.progress.querySelectorAll('.progress-step')) {
+    const i = PROGRESS_STEPS.indexOf(node.dataset.step);
+    node.classList.toggle('done', i < at);
+    node.classList.toggle('now', i === at);
+  }
+}
+
+/* ── 보기 방식 탭 (§10) ────────────────────────── */
+/** 'answer' | 'steps' | 'full' */
+let viewMode = 'full';
+
+function applyViewMode() {
+  document.body.dataset.view = viewMode;
+  if (!el.viewTabs) return;
+  for (const b of el.viewTabs.querySelectorAll('[data-view]')) {
+    b.setAttribute('aria-selected', String(b.dataset.view === viewMode));
+  }
+}
 
 /* ── 상태 표시 ─────────────────────────────────── */
 function setStatus(text, kind = 'idle') {
@@ -214,7 +286,7 @@ function setStatus(text, kind = 'idle') {
 
 function idleStatus() {
   if (navigator.onLine === false) return setStatus('오프라인', 'error');
-  if (!activeConfig(settings).apiKey) return setStatus('API 키 필요', 'error');
+  if (!activeConfig(settings).ready) return setStatus('AI 설정 필요', 'error');
   if (capture.mode === 'screen') return setStatus('공유 중', 'live');
   if (capture.mode === 'camera') return setStatus('카메라 켜짐', 'live');
   if (capture.mode === 'photo') return setStatus('사진 준비됨', 'live');
@@ -226,9 +298,9 @@ function syncProviderBadge() {
   const cfg = activeConfig(settings);
   el.providerName.textContent = cfg.meta.label.split(' ')[0];
   el.providerModel.textContent = cfg.model;
-  el.providerBadge.classList.toggle('badge-warn', !cfg.apiKey);
-  el.providerBadge.title = cfg.apiKey
-    ? `${cfg.meta.label} · ${cfg.model}`
+  el.providerBadge.classList.toggle('badge-warn', !cfg.ready);
+  el.providerBadge.title = cfg.ready
+    ? `${cfg.meta.label} · ${cfg.model}${cfg.useProxy ? ' · 서버 키 사용' : ''}`
     : `${cfg.meta.label} · API 키가 없습니다. 눌러서 설정하세요.`;
 }
 
@@ -275,7 +347,7 @@ function idleNote() {
 /* ── 설정 UI ───────────────────────────────────── */
 function fillModelOptions(provider, selected) {
   el.model.innerHTML = '';
-  for (const m of PROVIDERS[provider].models) {
+  for (const m of modelOptions(settings, provider)) {
     const opt = document.createElement('option');
     opt.value = m.id;
     opt.textContent = m.label;
@@ -290,8 +362,13 @@ function fillModelOptions(provider, selected) {
   el.model.value = selected || PROVIDERS[provider].models[0].id;
 }
 
+/**
+ * 설정 창에서 지금 고른 프로바이더.
+ * 설정 창을 한 번도 열지 않았으면 체크된 라디오가 없으므로, 저장된 설정을 씁니다.
+ */
 function currentPickedProvider() {
-  return el.providerPicker.querySelector('input:checked').value;
+  const picked = el.providerPicker.querySelector('input:checked');
+  return picked ? picked.value : (PROVIDERS[settings.provider] ? settings.provider : 'claude');
 }
 
 function syncProviderFields() {
@@ -306,6 +383,26 @@ function syncProviderFields() {
   fillModelOptions(provider, settings.models[provider]);
   syncKeyFlags();
   syncKeyStorageNote();
+  syncProxyNote();
+}
+
+/** 서버 프록시를 쓸 수 있는지 설정 화면에 그대로 알려 줍니다 (§2B). */
+function syncProxyNote() {
+  if (!el.proxyNote) return;
+  const provider = currentPickedProvider();
+  const status = proxyStatus();
+  if (!status.proxy) { el.proxyNote.hidden = true; return; }
+
+  el.proxyNote.hidden = false;
+  if (proxyHasKey(provider)) {
+    el.proxyNote.className = 'muted ok';
+    el.proxyNote.textContent = settings.preferProxy !== false
+      ? '🔒 이 서버에 키가 설정되어 있어, 키를 입력하지 않아도 사용할 수 있습니다. 키는 서버에만 있고 브라우저로 내려오지 않습니다.'
+      : '🔒 이 서버에 키가 있지만 "서버로 요청"이 꺼져 있어 직접 입력한 키를 씁니다.';
+  } else {
+    el.proxyNote.className = 'muted';
+    el.proxyNote.textContent = '이 서버에는 이 프로바이더의 키가 없습니다. 직접 입력한 키로 동작합니다.';
+  }
 }
 
 /** 키가 실제로 어디에 저장되는지 그대로 알려 줍니다. */
@@ -346,6 +443,13 @@ function openSettings() {
   el.grade.value = settings.grade;
   el.extra.value = settings.extra;
   el.maxWidth.value = settings.maxWidth;
+  el.rememberKeys.checked = settings.rememberKeys !== false;
+  el.keyExpiry.value = String(settings.keyExpiryHours || 0);
+  el.preferProxy.checked = settings.preferProxy !== false;
+  el.debugMode.checked = Boolean(settings.debug);
+  el.keyTestResult.textContent = '';
+  el.keyTestResult.className = 'test-result';
+  syncProxyNote();
   syncRangeLabels();
   el.settings.showModal();
 }
@@ -375,6 +479,12 @@ function persistSettingsFromForm() {
   settings.grade = el.grade.value;
   settings.extra = el.extra.value;
   settings.maxWidth = Number(el.maxWidth.value);
+  settings.rememberKeys = el.rememberKeys.checked;
+  settings.keyExpiryHours = Number(el.keyExpiry.value) || 0;
+  settings.preferProxy = el.preferProxy.checked;
+  settings.debug = el.debugMode.checked;
+  // 저장을 끄면 이미 저장돼 있던 키도 기기에서 지웁니다 (§39).
+  if (!settings.rememberKeys) delete settings.keysSavedAt;
   if (!saveSettings(settings)) {
     showError('설정을 브라우저에 저장하지 못했습니다. (시크릿 모드이거나 저장 공간이 가득 찼을 수 있습니다.) 이번 세션에서는 그대로 사용됩니다.');
   }
@@ -461,6 +571,38 @@ function buildResultActions() {
     });
     el.actions.append(btn);
   }
+
+  // 오답노트에 담기 (§25) — 지금 보고 있는 풀이를 그대로 저장합니다.
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.className = 'btn action-btn';
+  save.textContent = '📕 오답노트';
+  save.addEventListener('click', () => {
+    const last = state.turns.filter((t) => t.role === 'assistant').pop();
+    if (!last) return;
+    const { sections } = parseSolution(last.text);
+    const item = state.history.find((h) => h.id === state.activeHistory);
+    const id = state.activeHistory || Date.now();
+
+    if (hasNote(id)) {
+      removeNote(id);
+      save.textContent = '📕 오답노트';
+      drawNotes();
+      return;
+    }
+    const ok = addNote({
+      id,
+      question: sections.question || '',
+      answer: sections.answer || '',
+      solution: last.text,
+      subject: guessSubject(last.text),
+      thumb: item?.thumb || null,
+    });
+    save.textContent = ok ? '📕 담김 ✓' : '📕 저장 실패';
+    if (ok) { showNotesPanel(true); }
+    setTimeout(() => { save.textContent = hasNote(id) ? '📕 담김 ✓' : '📕 오답노트'; }, 1500);
+  });
+  el.actions.append(save);
 }
 
 /* 결과 화면 구성 (§57, §58) — 접을 수 있는 섹션들 */
@@ -517,8 +659,8 @@ function runCalculationCheck(sections) {
   return notes;
 }
 
-function sectionHtml({ icon, title, open }, content) {
-  return `<details class="sol-section"${open ? ' open' : ''}>`
+function sectionHtml({ key, icon, title, open }, content) {
+  return `<details class="sol-section" data-key="${key}"${open ? ' open' : ''}>`
     + `<summary><span class="sol-icon">${icon}</span>${title}</summary>`
     + `<div class="sol-body">${renderMarkdown(content)}</div></details>`;
 }
@@ -611,6 +753,8 @@ function renderAnswer(text, streaming) {
   // 형식을 따르지 않은 자유 형식 답변에도 "왜?"·"전체 복사"는 그대로 쓸 수 있어야
   // 하므로, 내용이 있으면 버튼을 보여 줍니다.
   el.actions.hidden = streaming || !String(text || '').trim();
+  // 보기 방식 탭은 구조화된 풀이가 있을 때만 의미가 있습니다 (§10).
+  el.viewTabs.hidden = streaming || !(has('answer') && (has('steps') || has('summary')));
   el.answerScroll.scrollTop = streaming ? el.answerScroll.scrollHeight : 0;
 }
 
@@ -620,12 +764,53 @@ function escapeText(s) {
   return d.innerHTML;
 }
 
-function showError(message) {
+/**
+ * 오류를 보여 줍니다. 원본 API 오류 JSON 은 그대로 노출하지 않고 (§32),
+ * 디버그 모드일 때만 접어서 덧붙입니다 (§60).
+ */
+function showError(message, err) {
   const box = document.createElement('div');
   box.className = 'error-box';
   box.textContent = message;
+
+  if (settings.debug && err?.detail) {
+    const more = document.createElement('details');
+    more.className = 'error-detail';
+    const sum = document.createElement('summary');
+    sum.textContent = `디버그 정보 (상태 ${err.status ?? '-'})`;
+    const pre = document.createElement('pre');
+    pre.textContent = err.detail;      // 키는 api.js 에서 이미 제외됩니다
+    more.append(sum, pre);
+    box.append(more);
+  }
+
+  // 다시 시도 버튼 (§33) — 마지막 요청을 그대로 한 번 더 보냅니다.
+  if (state.turns.length && !state.busy) {
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'btn retry-btn';
+    retry.textContent = '다시 시도';
+    retry.addEventListener('click', () => {
+      box.remove();
+      runAnalysis();
+    });
+    box.append(retry);
+  }
+
   el.answer.prepend(box);
   el.answerScroll.scrollTop = 0;
+}
+
+/** 디버그 한 줄 (§60) — 키·개인정보·이미지는 절대 넣지 않습니다. */
+function showDebugLine() {
+  const d = state.lastDebug;
+  if (!d) return;
+  const line = document.createElement('div');
+  line.className = 'debug-line';
+  line.textContent = `🐞 ${d.provider} · ${d.model}`
+    + `${d.viaProxy ? ' · 서버 프록시' : ' · 직접 호출'}`
+    + ` · ${d.ms}ms · ${d.chars}자`;
+  el.answer.append(line);
 }
 
 /* 모바일에서는 풀이 패널이 화면 아래에 있으므로 결과로 스크롤해 줍니다. */
@@ -755,8 +940,8 @@ async function solve({ followup = null } = {}) {
   if (state.busy) return;
 
   const cfg = activeConfig(settings);
-  if (!cfg.apiKey) {
-    setStatus('API 키 필요', 'error');
+  if (!cfg.ready) {
+    setStatus('AI 설정 필요', 'error');
     el.autoMode.checked = false; // 키가 생길 때까지 자동 감지가 반복 호출되지 않도록
     el.answer.innerHTML = '';
     showError(`${cfg.meta.label} API 키가 없습니다. ⚙️ 설정에서 키를 입력하고 저장한 뒤 자동 감지를 다시 켜세요.`);
@@ -792,7 +977,7 @@ async function solve({ followup = null } = {}) {
 async function runAnalysis() {
   if (state.busy) return;
   const cfg = activeConfig(settings);
-  if (!cfg.apiKey || !state.turns.length) return;
+  if (!cfg.ready || !state.turns.length) return;
   const followup = state.pendingFollowup;
 
   // 연결이 없으면 요청을 아예 보내지 않습니다. 화면 공유는 그대로 둡니다.
@@ -803,6 +988,8 @@ async function runAnalysis() {
 
   state.busy = true;
   state.controller = new AbortController();
+  setProgress('image');
+  const startedAt = Date.now();
   setStatus('분석 중…', 'busy');
   el.btnAbort.hidden = false;
   el.btnSolve.disabled = true;
@@ -819,6 +1006,7 @@ async function runAnalysis() {
   try {
     const full = await streamCompletion({
       provider: cfg.provider,
+      useProxy: cfg.useProxy,
       endpoint: cfg.endpoint,
       apiKey: cfg.apiKey,
       model: cfg.model,
@@ -832,6 +1020,8 @@ async function runAnalysis() {
       turns: state.turns,
       signal: state.controller.signal,
       onDelta: (chunk) => {
+        if (!acc) setProgress('read');
+        else if (acc.includes('풀이') || acc.includes('정답')) setProgress('solve');
         acc += chunk;
         const now = Date.now();
         if (now - lastPaint >= 100) {
@@ -850,9 +1040,17 @@ async function runAnalysis() {
     });
 
     clearTimeout(paintTimer);
+    setProgress('verify');
     state.awaitingNetwork = false;
     state.turns.push({ role: 'assistant', text: full });
-    renderAnswer(full, false);
+    renderAnswer(full, false);          // 여기서 앱이 직접 검산합니다
+    setProgress('done');
+    setTimeout(() => setProgress(null), 1500);
+    state.lastDebug = {
+      provider: cfg.provider, model: cfg.model, viaProxy: cfg.useProxy,
+      ms: Date.now() - startedAt, chars: full.length,
+    };
+    if (settings.debug) showDebugLine();
     idleStatus();
     if (!followup) {
       addHistory(state.lastImage, full);
@@ -864,6 +1062,7 @@ async function runAnalysis() {
     el.followup.disabled = false;
   } catch (err) {
     clearTimeout(paintTimer);
+    setProgress(null);
     if (err.name === 'AbortError') {
       renderAnswer(acc + '\n\n_(중단됨)_', false);
       idleStatus();
@@ -872,7 +1071,7 @@ async function runAnalysis() {
       showNetworkError(await networkHint());
     } else {
       renderAnswer(acc, false);
-      showError(err.message || String(err));
+      showError(err.message || String(err), err);
       setStatus('오류', 'error');
     }
   } finally {
@@ -974,13 +1173,43 @@ function updateActiveHistory(text) {
   persist();
 }
 
+/** 풀이 내용에서 과목을 추정합니다 (§7, §26 필터용). */
+function guessSubject(text) {
+  const t = String(text || '');
+  const hit = (re) => re.test(t);
+  if (hit(/방정식|함수|미분|적분|확률|통계|기하|도형|삼각|수학/)) return '수학';
+  if (hit(/영어|문법|어법|해석|English|단어/i)) return '영어';
+  if (hit(/국어|지문|문단|화자|서술자/)) return '국어';
+  if (hit(/과학|물리|화학|생명|지구|실험|원소/)) return '과학';
+  if (hit(/사회|역사|지리|경제|정치|헌법/)) return '사회';
+  return '기타';
+}
+
+/** 검색어·과목·정렬을 적용한 목록 (§26) */
+function visibleHistory() {
+  const q = (el.historySearch?.value || '').trim().toLowerCase();
+  const subject = el.historySubject?.value || '';
+  const sort = el.historySort?.value || 'new';
+
+  let rows = state.history.filter((h) => {
+    if (subject && guessSubject(h.text) !== subject) return false;
+    if (!q) return true;
+    return String(h.text || '').toLowerCase().includes(q);
+  });
+  rows = [...rows].sort((a, b) => (sort === 'old' ? a.id - b.id : b.id - a.id));
+  return rows;
+}
+
 function drawHistory() {
   el.history.innerHTML = '';
-  if (!state.history.length) {
-    el.history.innerHTML = '<li class="history-empty muted">분석한 화면이 여기에 쌓입니다.</li>';
+  const rows = visibleHistory();
+  if (!rows.length) {
+    el.history.innerHTML = state.history.length
+      ? '<li class="history-empty muted">조건에 맞는 기록이 없습니다.</li>'
+      : '<li class="history-empty muted">분석한 화면이 여기에 쌓입니다.</li>';
     return;
   }
-  for (const h of state.history) {
+  for (const h of rows) {
     const li = document.createElement('li');
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -1350,8 +1579,23 @@ el.btnFlip.addEventListener('click', async () => {
 });
 
 /** 사진·스크린샷 한 장을 불러와 즉시 풀이합니다. (파일 선택 / 공유 / 붙여넣기 공통) */
+/** 지원 이미지 형식과 크기 상한 (§51) */
+const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/bmp'];
+const MAX_FILE_BYTES = 25 * 1024 * 1024;
+
 async function loadPhoto(file) {
   if (!file) return;
+
+  // 형식·크기를 먼저 확인해, 읽을 수 없는 파일로 API 를 호출하지 않습니다.
+  if (file.type && !ALLOWED_TYPES.includes(file.type)) {
+    showError(`이 형식(${file.type})은 지원하지 않습니다. JPG · PNG · WEBP 파일을 선택해 주세요.`);
+    return;
+  }
+  if (file.size > MAX_FILE_BYTES) {
+    showError(`이미지가 너무 큽니다 (${Math.round(file.size / 1024 / 1024)}MB). 25MB 이하의 사진을 선택해 주세요.`);
+    return;
+  }
+
   try {
     await capture.setPhoto(file);
     onCaptureReady();
@@ -1449,11 +1693,168 @@ el.autoMode.addEventListener('change', () => {
   if (IS_ANDROID_APP) androidBridge.setConfig(nativeConfig());
 });
 
+for (const node of [el.historySearch, el.historySubject, el.historySort]) {
+  node.addEventListener('input', drawHistory);
+}
+
 el.btnClearHistory.addEventListener('click', () => {
   state.history = [];
   state.activeHistory = null;
   drawHistory();
   persist();
+});
+
+/* ── 테마 · 보기 탭 · 하단 네비 (§36, §10, §46) ── */
+
+el.btnTheme.addEventListener('click', () => {
+  const next = THEME_ORDER[(THEME_ORDER.indexOf(settings.theme) + 1) % THEME_ORDER.length];
+  settings.theme = next;
+  saveSettings(settings);
+  applyTheme();
+});
+
+el.viewTabs.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-view]');
+  if (!btn) return;
+  viewMode = btn.dataset.view;
+  applyViewMode();
+});
+
+/** 하단 네비 — 해당 영역으로 이동하거나 화면을 전환합니다. */
+el.bottomNav.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-nav]');
+  if (!btn) return;
+  const to = btn.dataset.nav;
+
+  if (to === 'settings') { openSettings(); return; }
+  if (to === 'camera') {
+    setSource('camera');
+    document.querySelector('.panel-capture')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } else if (to === 'notes') {
+    showNotesPanel(true);
+    el.panelNotes.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } else if (to === 'history') {
+    showNotesPanel(false);
+    el.panelHistory.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } else {
+    showNotesPanel(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  for (const b of el.bottomNav.querySelectorAll('[data-nav]')) {
+    b.setAttribute('aria-current', String(b === btn));
+  }
+});
+
+/* ── 오답노트 (§25) ────────────────────────────── */
+
+function showNotesPanel(show) {
+  el.panelNotes.hidden = !show;
+  if (show) drawNotes();
+}
+
+function drawNotes() {
+  const notes = loadNotes();
+  el.notesSize.textContent = notes.length ? `${notes.length}개 · ${notesSizeKb()}KB` : '';
+  el.notes.innerHTML = '';
+  if (!notes.length) {
+    el.notes.innerHTML = '<li class="history-empty muted">다시 볼 문제를 오답노트에 담아 두세요.</li>';
+    return;
+  }
+  for (const n of notes) {
+    const li = document.createElement('li');
+    li.className = 'note-item';
+
+    const head = document.createElement('div');
+    head.className = 'note-head';
+    head.innerHTML = `<strong>${escapeText(n.question || '문제')}</strong>`
+      + `<span class="note-meta">${escapeText(n.subject)} · `
+      + `${n.at.toLocaleDateString('ko-KR')}</span>`;
+
+    const body = document.createElement('div');
+    body.className = 'note-body';
+    body.innerHTML = (n.thumb ? `<img alt="문제 미리보기" src="${n.thumb}" />` : '')
+      + `<div><b>정답</b> ${escapeText(n.answer || '-')}</div>`
+      + (n.reason ? `<div class="note-reason"><b>틀린 이유</b> ${escapeText(n.reason)}</div>` : '');
+
+    const acts = document.createElement('div');
+    acts.className = 'note-actions';
+
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'btn btn-ghost';
+    open.textContent = '풀이 보기';
+    open.addEventListener('click', () => {
+      renderAnswer(n.solution || '', false);
+      revealAnswer();
+    });
+
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'btn btn-ghost';
+    del.textContent = '삭제';
+    del.addEventListener('click', () => { removeNote(n.id); drawNotes(); });
+
+    acts.append(open, del);
+    li.append(head, body, acts);
+    el.notes.append(li);
+  }
+}
+
+el.btnClearNotes.addEventListener('click', () => {
+  if (!loadNotes().length) return;
+  clearNotes();
+  drawNotes();
+});
+
+/* ── API 키 연결 테스트 · 모델 목록 (§4, §38) ──── */
+
+el.btnTestKey.addEventListener('click', async () => {
+  const provider = currentPickedProvider();
+  const apiKey = el.apiKey.value.trim();
+  const endpoint = el.endpoint.value.trim() || PROVIDERS[provider].defaultEndpoint;
+
+  el.btnTestKey.disabled = true;
+  el.keyTestResult.className = 'test-result testing';
+  el.keyTestResult.textContent = '확인 중…';
+  try {
+    const { models } = await testConnection({ provider, apiKey, endpoint });
+    el.keyTestResult.className = 'test-result ok';
+    el.keyTestResult.textContent = models.length
+      ? `✓ 연결 성공 · 모델 ${models.length}개`
+      : '✓ 연결 성공';
+    if (models.length) mergeFetchedModels(provider, models);
+  } catch (err) {
+    el.keyTestResult.className = 'test-result bad';
+    // 원본 오류가 아니라 정리된 문구만 보여 줍니다 (§32).
+    el.keyTestResult.textContent = `✕ ${err.message}`;
+  } finally {
+    el.btnTestKey.disabled = false;
+  }
+});
+
+/** 서버에서 받아 온 모델을 사용자 목록에 합칩니다. */
+function mergeFetchedModels(provider, models) {
+  const known = new Set(PROVIDERS[provider].models.map((m) => m.id));
+  const extra = models.map((m) => m.id).filter((id) => !known.has(id));
+  settings.customModels[provider] = [
+    ...new Set([...(settings.customModels[provider] || []), ...extra]),
+  ].slice(0, 80);
+  fillModelOptions(provider, el.model.value || settings.models[provider]);
+}
+
+el.btnRefreshModels.addEventListener('click', () => el.btnTestKey.click());
+
+el.btnAddModel.addEventListener('click', () => {
+  const provider = currentPickedProvider();
+  const id = el.customModel.value.trim();
+  if (!id) return;
+  settings.customModels[provider] = [
+    ...new Set([...(settings.customModels[provider] || []), id]),
+  ];
+  el.customModel.value = '';
+  fillModelOptions(provider, id);
+  syncKeyFlags();
 });
 
 el.btnSettings.addEventListener('click', openSettings);
@@ -1534,11 +1935,21 @@ function init() {
   state.history = restored.history;
   state.session = restored.session;
 
+  applyTheme();
+  applyViewMode();
   syncProviderBadge();
   syncSessionBadge();
   syncKeyStorageNote();
   buildResultActions();
   drawHistory();
+  drawNotes();
+
+  // 서버 프록시가 있으면 키 없이도 쓸 수 있으므로, 확인되면 화면을 갱신합니다.
+  probeProxy().then(() => {
+    syncProviderBadge();
+    syncProxyNote();
+    idleStatus();
+  });
 
   // 화면 공유 탭은 폰에서도 남겨 두고(스크린샷 공유 안내로 바뀝니다),
   // 카메라만 지원 여부에 따라 비활성화합니다.

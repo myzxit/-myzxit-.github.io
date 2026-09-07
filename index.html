@@ -31,6 +31,7 @@
     </button>
     <button id="btn-install" class="btn btn-primary" type="button" hidden>📲<span class="btn-label">앱 설치</span></button>
     <span id="status" class="status status-idle">대기 중</span>
+    <button id="btn-theme" class="btn btn-ghost" type="button" aria-label="화면 테마 바꾸기" title="화면 테마">🌙</button>
     <button id="btn-settings" class="btn btn-ghost" type="button" aria-label="설정">⚙️<span class="btn-label">설정</span></button>
   </div>
 </header>
@@ -105,6 +106,22 @@
       </div>
     </div>
 
+    <!-- 풀이 진행 단계 (§20) -->
+    <div class="progress" id="progress" hidden>
+      <span class="progress-step" data-step="image">📷 이미지 분석</span>
+      <span class="progress-step" data-step="read">🔎 문제 인식</span>
+      <span class="progress-step" data-step="solve">✏️ 풀이 작성</span>
+      <span class="progress-step" data-step="verify">🔍 검산</span>
+      <span class="progress-step" data-step="done">✅ 완료</span>
+    </div>
+
+    <!-- 보기 방식 (§10) -->
+    <div class="view-tabs" id="view-tabs" role="tablist" aria-label="풀이 보기 방식" hidden>
+      <button type="button" role="tab" data-view="answer" aria-selected="false">정답만</button>
+      <button type="button" role="tab" data-view="steps" aria-selected="false">풀이 과정</button>
+      <button type="button" role="tab" data-view="full" aria-selected="true">자세한 설명</button>
+    </div>
+
     <div class="answer-scroll" id="answer-scroll">
       <article id="answer" class="answer">
         <div class="placeholder">
@@ -127,17 +144,57 @@
   </section>
 
   <!-- ── 기록 ────────────────────────────────────── -->
-  <section class="panel panel-history">
+  <section class="panel panel-history" id="panel-history">
     <div class="panel-head">
       <h2>기록</h2>
       <button id="btn-clear-history" class="btn btn-ghost" type="button">비우기</button>
+    </div>
+    <!-- 검색·필터·정렬 (§26) -->
+    <div class="history-tools">
+      <input id="history-search" class="input" type="search" placeholder="🔎 문제 검색" aria-label="기록에서 문제 검색" />
+      <select id="history-subject" class="select" aria-label="과목으로 거르기">
+        <option value="">전체 과목</option>
+        <option value="수학">수학</option>
+        <option value="영어">영어</option>
+        <option value="국어">국어</option>
+        <option value="과학">과학</option>
+        <option value="사회">사회</option>
+        <option value="기타">기타</option>
+      </select>
+      <select id="history-sort" class="select" aria-label="정렬 순서">
+        <option value="new">최신순</option>
+        <option value="old">오래된순</option>
+      </select>
     </div>
     <ul class="history" id="history">
       <li class="history-empty muted">분석한 화면이 여기에 쌓입니다.</li>
     </ul>
   </section>
 
+  <!-- ── 오답노트 (§25) ──────────────────────────── -->
+  <section class="panel panel-notes" id="panel-notes" hidden>
+    <div class="panel-head">
+      <h2>📕 오답노트</h2>
+      <div class="head-actions">
+        <span id="notes-size" class="muted small"></span>
+        <button id="btn-clear-notes" class="btn btn-ghost" type="button">비우기</button>
+      </div>
+    </div>
+    <ul class="notes" id="notes">
+      <li class="history-empty muted">다시 볼 문제를 오답노트에 담아 두세요.</li>
+    </ul>
+  </section>
+
 </main>
+
+<!-- ── 모바일 하단 네비게이션 (§46) ───────────────── -->
+<nav class="bottom-nav" id="bottom-nav" aria-label="주요 화면">
+  <button type="button" data-nav="home" aria-current="true"><span>🏠</span>홈</button>
+  <button type="button" data-nav="camera"><span>📷</span>카메라</button>
+  <button type="button" data-nav="history"><span>📚</span>기록</button>
+  <button type="button" data-nav="notes"><span>📕</span>오답노트</button>
+  <button type="button" data-nav="settings"><span>⚙️</span>설정</button>
+</nav>
 
 <!-- ── 설정 모달 ─────────────────────────────────── -->
 <dialog id="settings" class="dialog">
@@ -180,19 +237,53 @@
     <label class="field">
       <span id="key-label">API 키</span>
       <span class="key-row">
-        <input type="password" id="api-key" class="input" placeholder="sk-ant-..." autocomplete="off" />
-        <button type="button" class="btn btn-ghost" id="btn-reveal" title="키 보기">👁</button>
-        <button type="button" class="btn btn-ghost" id="btn-forget" title="이 프로바이더의 저장된 키 삭제">🗑</button>
+        <input type="password" id="api-key" class="input" placeholder="sk-ant-..." autocomplete="off"
+               spellcheck="false" autocapitalize="off" autocorrect="off" />
+        <button type="button" class="btn btn-ghost" id="btn-reveal" title="키 잠시 보기" aria-label="API 키 잠시 보기">👁</button>
+        <button type="button" class="btn btn-ghost" id="btn-forget" title="이 프로바이더의 저장된 키 삭제" aria-label="저장된 키 삭제">🗑</button>
+      </span>
+      <span class="key-row">
+        <button type="button" class="btn" id="btn-test-key">🔌 연결 테스트</button>
+        <span id="key-test-result" class="test-result" role="status" aria-live="polite"></span>
       </span>
       <small class="muted">
         <span id="key-storage">키는 이 브라우저(localStorage)에만 저장되고 프로바이더별로 각각 보관됩니다.</span>
         <a id="key-link" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">키 발급받기 ↗</a>
       </small>
+      <small class="muted" id="proxy-note" hidden></small>
     </label>
+
+    <!-- API 키 저장 방식 (§39) -->
+    <div class="field-row">
+      <label class="field checkbox-field">
+        <input type="checkbox" id="remember-keys" checked />
+        <span>이 기기에 키 저장</span>
+      </label>
+      <label class="field">
+        <span>키 자동 만료</span>
+        <select id="key-expiry" class="select">
+          <option value="0">만료 없음</option>
+          <option value="24">24시간</option>
+          <option value="168">7일</option>
+        </select>
+      </label>
+    </div>
+    <small class="muted key-warning">
+      ⚠️ 브라우저에서는 어떤 방식으로도 키를 완벽히 숨길 수 없습니다.
+      공용 기기에서는 <b>키 저장을 끄거나</b> 사용 후 🗑 로 지우세요.
+    </small>
 
     <label class="field">
       <span>모델</span>
-      <select id="model" class="select"></select>
+      <span class="key-row">
+        <select id="model" class="select"></select>
+        <button type="button" class="btn btn-ghost" id="btn-refresh-models" title="사용 가능한 모델 다시 불러오기" aria-label="모델 목록 새로고침">🔄</button>
+      </span>
+      <span class="key-row">
+        <input type="text" id="custom-model" class="input" placeholder="모델 ID 직접 입력 (예: gpt-4o-mini)"
+               spellcheck="false" autocapitalize="off" />
+        <button type="button" class="btn btn-ghost" id="btn-add-model">추가</button>
+      </span>
     </label>
 
     <div class="field-row">
@@ -273,6 +364,14 @@
       <label class="field">
         <span>전송 이미지 최대 가로 <span class="mono" id="width-label">1400px</span></span>
         <input type="range" id="max-width" min="600" max="2000" step="100" value="1400" />
+      </label>
+      <label class="field checkbox-field">
+        <input type="checkbox" id="prefer-proxy" checked />
+        <span>서버에 키가 있으면 서버로 요청 (키를 기기에 두지 않음)</span>
+      </label>
+      <label class="field checkbox-field">
+        <input type="checkbox" id="debug-mode" />
+        <span>디버그 정보 표시 (모델·응답 시간·오류 코드)</span>
       </label>
     </details>
 

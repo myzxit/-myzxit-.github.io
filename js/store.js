@@ -8,6 +8,7 @@
 // 평문 쪽은 지웁니다.
 
 import { androidBridge } from './android.js';
+import { proxyHasKey } from './proxy.js';
 
 const KEY = 'screensolver.settings.v2';
 
@@ -79,6 +80,12 @@ export const DEFAULTS = {
   maxWidth: 1400,
   autoMode: true,
   selectFirst: true,  // 이미지를 받으면 문제 영역을 먼저 고르게 할지
+  theme: 'system',    // 'system' | 'dark' | 'light'  (§36)
+  rememberKeys: true, // API 키를 기기에 저장할지 (§39). false 면 이번 세션만 사용
+  keyExpiryHours: 0,  // 저장한 키 자동 만료. 0 이면 만료 없음 (§39)
+  preferProxy: true,  // 서버에 키가 있으면 그쪽을 우선 사용 (§2B)
+  debug: false,       // 디버그 정보 표시 (§60)
+  customModels: { claude: [], openai: [], gemini: [] },  // 직접 추가한 모델 ID (§4)
 };
 
 /** structuredClone 이 없는 구형 WebView 에서도 동작하는 깊은 복사 */
@@ -102,6 +109,7 @@ export function loadSettings() {
         keys: { ...DEFAULTS.keys, ...(saved.keys || {}) },
         models: { ...DEFAULTS.models, ...(saved.models || {}) },
         endpoints: { ...DEFAULTS.endpoints, ...(saved.endpoints || {}) },
+        customModels: { ...DEFAULTS.customModels, ...(saved.customModels || {}) },
       };
     }
   } catch {
@@ -123,11 +131,52 @@ export function loadSettings() {
     // 평문이 남아 있었다면 즉시 지웁니다.
     if (migrated) saveSettings(settings);
   }
+
+  // 저장한 키의 자동 만료 (§39). 만료됐으면 지우고 다시 입력하게 합니다.
+  if (settings.keyExpiryHours > 0 && settings.keysSavedAt) {
+    const age = Date.now() - Number(settings.keysSavedAt);
+    if (age > settings.keyExpiryHours * 3600_000) {
+      settings.keys = { ...DEFAULTS.keys };
+      settings.keysExpired = true;
+      saveSettings(settings);
+    }
+  }
   return settings;
+}
+
+/**
+ * 저장된 키를 모두 지웁니다 (§39).
+ * 기기에서 완전히 없애야 하므로 암호화 저장소까지 함께 비웁니다.
+ */
+export function forgetAllKeys(settings) {
+  settings.keys = { ...DEFAULTS.keys };
+  delete settings.keysSavedAt;
+  if (secureKeysAvailable()) {
+    for (const name of Object.values(SECRET_NAME)) androidBridge.secure.remove(name);
+  }
+  return saveSettings(settings);
 }
 
 export function saveSettings(settings) {
   try {
+    // "저장하지 않기" 를 고른 경우 (§39) — 키는 이 세션의 메모리에만 둡니다.
+    if (settings.rememberKeys === false) {
+      const stripped = { ...settings, keys: { ...DEFAULTS.keys } };
+      delete stripped.keysSavedAt;
+      if (secureKeysAvailable()) {
+        for (const name of Object.values(SECRET_NAME)) androidBridge.secure.remove(name);
+      }
+      localStorage.setItem(KEY, JSON.stringify(stripped));
+      return true;
+    }
+
+    // 만료 계산의 기준 시각. 키가 있을 때만 기록합니다.
+    if (Object.values(settings.keys || {}).some((v) => (v || '').trim())) {
+      settings.keysSavedAt = settings.keysSavedAt || Date.now();
+    } else {
+      delete settings.keysSavedAt;
+    }
+
     if (secureKeysAvailable()) {
       // 키는 암호화 저장소에만 두고, 설정 JSON 에는 절대 남기지 않습니다.
       const stripped = { ...settings, keys: { ...DEFAULTS.keys } };
@@ -146,16 +195,35 @@ export function saveSettings(settings) {
   }
 }
 
-/** 현재 프로바이더 기준으로 실제 사용할 키/모델/엔드포인트를 정리해서 반환 */
+/**
+ * 현재 프로바이더 기준으로 실제 사용할 키/모델/엔드포인트를 정리해서 반환.
+ *
+ * 서버 프록시에 이 프로바이더의 키가 있고 사용자가 막지 않았다면 프록시를
+ * 씁니다. 이때는 브라우저에 키가 없어도 됩니다. (§2B)
+ */
 export function activeConfig(s) {
   // 저장값이 손상됐거나 예전 버전이면 기본 프로바이더로 되돌립니다.
   const p = PROVIDERS[s.provider] ? s.provider : DEFAULTS.provider;
   const meta = PROVIDERS[p];
+  const apiKey = (s.keys[p] || '').trim();
+  const useProxy = s.preferProxy !== false && proxyHasKey(p);
   return {
     provider: p,
     meta,
-    apiKey: (s.keys[p] || '').trim(),
+    apiKey,
+    useProxy,
+    // 프록시를 쓰면 브라우저에 키가 없어도 요청할 수 있습니다.
+    ready: useProxy || Boolean(apiKey),
     model: s.models[p] || meta.models[0].id,
     endpoint: (s.endpoints[p] || '').trim() || meta.defaultEndpoint,
   };
+}
+
+/** 설정에 저장된 사용자 지정 모델까지 합친 목록 (§4) */
+export function modelOptions(s, provider) {
+  const meta = PROVIDERS[provider];
+  const extra = (s.customModels?.[provider] || [])
+    .filter((id) => id && !meta.models.some((m) => m.id === id))
+    .map((id) => ({ id, label: `${id} (직접 추가)` }));
+  return [...meta.models, ...extra];
 }

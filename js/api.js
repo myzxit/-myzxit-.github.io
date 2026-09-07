@@ -1,8 +1,12 @@
-// Claude / ChatGPT / Gemini 스트리밍 어댑터
+// Claude / ChatGPT / Gemini 어댑터 (§3 공통 인터페이스)
 //
 // 공통 입력 형식:
 //   turns: [{ role: 'user'|'assistant', text: string, image?: { mime, base64 } }]
 // 공통 출력: onDelta(textChunk) 를 반복 호출하고, 전체 텍스트를 resolve.
+//
+// 호출 경로는 두 가지이고, 응답을 읽는 방법(SSE 파서)은 같습니다.
+//   직접 호출  — 브라우저가 사용자의 키로 프로바이더를 부릅니다.
+//   서버 프록시 — /api/ai 가 서버 환경변수의 키로 대신 부릅니다. (§2B)
 
 /**
  * fetch 를 감싸 네트워크 실패를 구분 가능한 오류로 바꿉니다.
@@ -44,29 +48,34 @@ async function* sseLines(response) {
   }
 }
 
+/** 사람이 읽을 수 있는 실패 문구 (§32). 원본 JSON 은 화면에 내보내지 않습니다. */
+const STATUS_HINT = {
+  400: '요청이 거부되었습니다. 모델 이름과 이미지 크기를 확인하세요.',
+  401: 'API 키가 올바르지 않습니다. 앞뒤 공백 없이 다시 붙여넣어 보세요.',
+  403: '이 API 키로는 해당 모델을 쓸 수 없습니다. 다른 모델을 선택해 보세요.',
+  404: '선택한 모델을 사용할 수 없습니다. 설정에서 모델을 확인해 주세요.',
+  413: '이미지가 너무 큽니다. 설정에서 전송 이미지 최대 가로를 줄이세요.',
+  429: '현재 API 사용량 제한에 도달했습니다. 잠시 후 다시 시도하세요.',
+  500: '서비스 쪽 일시적인 오류입니다. 잠시 후 다시 시도하세요.',
+  501: '서버에 이 프로바이더의 키가 설정되어 있지 않습니다. 설정에서 직접 키를 입력해 주세요.',
+  502: 'AI 서비스에 연결하지 못했습니다. 잠시 후 다시 시도하세요.',
+  503: '서비스가 혼잡합니다. 잠시 후 다시 시도하세요.',
+};
+
 async function failFrom(response, provider) {
   let detail = '';
   try {
     const body = await response.text();
     try {
       const j = JSON.parse(body);
-      detail = j.error?.message || j.message || body;
+      detail = j.error?.message || j.message || j.error || body;
     } catch {
       detail = body;
     }
   } catch { /* 본문을 읽지 못한 경우 상태코드만 사용 */ }
+  detail = String(detail || '');
 
-  // 실제로 자주 겪는 실패를 한국어로 풀어 줍니다. (키 값 자체는 절대 출력하지 않습니다)
-  let hint = {
-    400: '요청이 거부되었습니다. 모델 이름과 이미지 크기를 확인하세요.',
-    401: 'API 키가 올바르지 않습니다. 앞뒤 공백 없이 다시 붙여넣어 보세요.',
-    403: '이 API 키로는 해당 모델을 쓸 수 없습니다. 다른 모델을 선택해 보세요.',
-    404: '모델 이름 또는 엔드포인트가 올바르지 않습니다. 설정에서 모델을 바꿔 보세요.',
-    413: '이미지가 너무 큽니다. 설정에서 전송 이미지 최대 가로를 줄이세요.',
-    429: '요청 한도에 걸렸습니다. 잠시 후 다시 시도하세요.',
-    500: '서비스 쪽 일시적인 오류입니다. 잠시 후 다시 시도하세요.',
-    503: '서비스가 혼잡합니다. 잠시 후 다시 시도하세요.',
-  }[response.status] || '';
+  let hint = STATUS_HINT[response.status] || '알 수 없는 오류가 발생했습니다.';
 
   // 잔액/무료 등급 문제는 원인이 전혀 다르므로 따로 안내합니다.
   if (/credit balance|billing|insufficient_quota|quota|exceeded your current quota|free tier/i.test(detail)) {
@@ -75,140 +84,189 @@ async function failFrom(response, provider) {
       : `${provider} 는 무료 등급이 없어 결제 크레딧이 있어야 API 가 동작합니다. 무료로 쓰려면 설정에서 Gemini 를 선택하세요.`;
   }
 
-  const err = new Error(
-    `${provider} 오류 ${response.status}: ${detail.slice(0, 300) || response.statusText}` +
-    (hint ? `\n\n→ ${hint}` : ''),
-  );
+  // 사용자에게는 정리된 문구만 보여 줍니다. 원문은 디버그 모드에서만 씁니다.
+  const err = new Error(hint);
   err.status = response.status;
+  err.provider = provider;
+  err.detail = detail.slice(0, 500);
   throw err;
 }
 
-/* ── Claude ──────────────────────────────────────── */
-async function streamClaude({ endpoint, apiKey, model, system, turns, signal, onDelta }) {
-  const messages = turns.map((t) => {
-    const content = [];
-    if (t.image) {
-      content.push({
-        type: 'image',
-        source: { type: 'base64', media_type: t.image.mime, data: t.image.base64 },
-      });
-    }
-    content.push({ type: 'text', text: t.text });
-    return { role: t.role, content };
-  });
+/* ── 프로바이더별 요청/응답 규격 (§3, §4) ───────────── */
 
-  const res = await requestOrThrow(endpoint, {
-    method: 'POST',
-    signal,
-    headers: {
+const SPECS = {
+  claude: {
+    label: 'Claude',
+    directUrl: ({ endpoint }) => endpoint,
+    directHeaders: (apiKey) => ({
       'content-type': 'application/json',
       'x-api-key': apiKey,
       'anthropic-version': '2023-06-01',
       'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({ model, max_tokens: 4096, system, messages, stream: true }),
-  });
-  if (!res.ok) await failFrom(res, 'Claude');
+    }),
+    body: ({ model, system, turns }) => ({
+      model,
+      max_tokens: 4096,
+      system,
+      stream: true,
+      messages: turns.map((t) => ({
+        role: t.role,
+        content: [
+          ...(t.image
+            ? [{ type: 'image', source: { type: 'base64', media_type: t.image.mime, data: t.image.base64 } }]
+            : []),
+          { type: 'text', text: t.text },
+        ],
+      })),
+    }),
+    delta: (evt) => (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta'
+      ? evt.delta.text : ''),
+    errorOf: (evt) => (evt.type === 'error' ? evt.error?.message : null),
+    // 연결 테스트·모델 목록 (§4, §38)
+    modelsUrl: () => 'https://api.anthropic.com/v1/models',
+    modelsHeaders: (apiKey) => ({
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    }),
+    modelsOf: (j) => (j.data || []).map((m) => ({ id: m.id, label: m.display_name || m.id })),
+  },
 
+  openai: {
+    label: 'ChatGPT',
+    directUrl: ({ endpoint }) => endpoint,
+    directHeaders: (apiKey) => ({ 'content-type': 'application/json', authorization: `Bearer ${apiKey}` }),
+    body: ({ model, system, turns }) => ({
+      model,
+      stream: true,
+      max_completion_tokens: 4096,
+      messages: [
+        { role: 'system', content: system },
+        ...turns.map((t) => (t.role === 'assistant'
+          ? { role: 'assistant', content: t.text }
+          : {
+            role: 'user',
+            content: [
+              ...(t.image
+                ? [{ type: 'image_url', image_url: { url: `data:${t.image.mime};base64,${t.image.base64}` } }]
+                : []),
+              { type: 'text', text: t.text },
+            ],
+          })),
+      ],
+    }),
+    delta: (evt) => evt.choices?.[0]?.delta?.content || '',
+    errorOf: (evt) => evt.error?.message || null,
+    modelsUrl: () => 'https://api.openai.com/v1/models',
+    modelsHeaders: (apiKey) => ({ authorization: `Bearer ${apiKey}` }),
+    modelsOf: (j) => (j.data || [])
+      .filter((m) => /^(gpt|o\d)/.test(m.id))
+      .map((m) => ({ id: m.id, label: m.id })),
+  },
+
+  gemini: {
+    label: 'Gemini',
+    directUrl: ({ endpoint, model }) =>
+      `${endpoint.replace(/\/+$/, '')}/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`,
+    directHeaders: (apiKey) => ({ 'content-type': 'application/json', 'x-goog-api-key': apiKey }),
+    body: ({ system, turns }) => ({
+      contents: turns.map((t) => ({
+        role: t.role === 'assistant' ? 'model' : 'user',
+        parts: [
+          ...(t.image ? [{ inline_data: { mime_type: t.image.mime, data: t.image.base64 } }] : []),
+          { text: t.text },
+        ],
+      })),
+      system_instruction: { parts: [{ text: system }] },
+      generationConfig: { maxOutputTokens: 4096 },
+    }),
+    delta: (evt) => (evt.candidates?.[0]?.content?.parts || [])
+      .map((p) => p.text || '').join(''),
+    errorOf: (evt) => evt.error?.message || null,
+    modelsUrl: ({ endpoint }) => `${(endpoint || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/+$/, '')}/models`,
+    modelsHeaders: (apiKey) => ({ 'x-goog-api-key': apiKey }),
+    modelsOf: (j) => (j.models || [])
+      .filter((m) => (m.supportedGenerationMethods || []).includes('generateContent'))
+      .map((m) => ({ id: String(m.name || '').replace(/^models\//, ''), label: m.displayName || m.name })),
+  },
+};
+
+/** 프로바이더 응답(SSE)을 읽어 전체 텍스트를 만듭니다. */
+async function readStream(res, spec, onDelta) {
   let full = '';
   for await (const data of sseLines(res)) {
     if (data === '[DONE]') break;
     let evt;
     try { evt = JSON.parse(data); } catch { continue; }
-    if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta') {
-      full += evt.delta.text;
-      onDelta(evt.delta.text);
-    } else if (evt.type === 'error') {
-      throw new Error(`Claude 오류: ${evt.error?.message || '알 수 없는 오류'}`);
-    }
-  }
-  return full;
-}
-
-/* ── OpenAI (ChatGPT) ────────────────────────────── */
-async function streamOpenAI({ endpoint, apiKey, model, system, turns, signal, onDelta }) {
-  const messages = [{ role: 'system', content: system }];
-  for (const t of turns) {
-    if (t.role === 'assistant') {
-      messages.push({ role: 'assistant', content: t.text });
-      continue;
-    }
-    const content = [];
-    if (t.image) {
-      content.push({
-        type: 'image_url',
-        image_url: { url: `data:${t.image.mime};base64,${t.image.base64}` },
-      });
-    }
-    content.push({ type: 'text', text: t.text });
-    messages.push({ role: 'user', content });
-  }
-
-  const res = await requestOrThrow(endpoint, {
-    method: 'POST',
-    signal,
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model, messages, stream: true, max_completion_tokens: 4096 }),
-  });
-  if (!res.ok) await failFrom(res, 'ChatGPT');
-
-  let full = '';
-  for await (const data of sseLines(res)) {
-    if (data === '[DONE]') break;
-    let evt;
-    try { evt = JSON.parse(data); } catch { continue; }
-    if (evt.error) throw new Error(`ChatGPT 오류: ${evt.error.message || '알 수 없는 오류'}`);
-    const piece = evt.choices?.[0]?.delta?.content;
+    const message = spec.errorOf(evt);
+    if (message) throw new Error(`${spec.label} 오류: ${message}`);
+    const piece = spec.delta(evt);
     if (piece) { full += piece; onDelta(piece); }
   }
   return full;
 }
 
-/* ── Gemini ──────────────────────────────────────── */
-async function streamGemini({ endpoint, apiKey, model, system, turns, signal, onDelta }) {
-  const base = endpoint.replace(/\/+$/, '');
-  const url = `${base}/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`;
-
-  const contents = turns.map((t) => {
-    const parts = [];
-    if (t.image) parts.push({ inline_data: { mime_type: t.image.mime, data: t.image.base64 } });
-    parts.push({ text: t.text });
-    return { role: t.role === 'assistant' ? 'model' : 'user', parts };
-  });
-
-  const res = await requestOrThrow(url, {
-    method: 'POST',
-    signal,
-    headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
-    body: JSON.stringify({
-      contents,
-      system_instruction: { parts: [{ text: system }] },
-      generationConfig: { maxOutputTokens: 4096 },
-    }),
-  });
-  if (!res.ok) await failFrom(res, 'Gemini');
-
-  let full = '';
-  for await (const data of sseLines(res)) {
-    if (data === '[DONE]') break;
-    let evt;
-    try { evt = JSON.parse(data); } catch { continue; }
-    if (evt.error) throw new Error(`Gemini 오류: ${evt.error.message || '알 수 없는 오류'}`);
-    for (const part of evt.candidates?.[0]?.content?.parts || []) {
-      if (part.text) { full += part.text; onDelta(part.text); }
-    }
-  }
-  return full;
-}
-
-const ADAPTERS = { claude: streamClaude, openai: streamOpenAI, gemini: streamGemini };
-
 /**
  * 선택한 프로바이더로 스트리밍 요청을 보냅니다.
+ * @param {object} o
+ * @param {boolean} [o.useProxy] 서버 프록시로 보낼지 (키를 브라우저가 몰라도 됩니다)
  * @returns {Promise<string>} 전체 응답 텍스트
  */
-export function streamCompletion({ provider, ...rest }) {
-  const adapter = ADAPTERS[provider];
-  if (!adapter) throw new Error(`알 수 없는 프로바이더: ${provider}`);
-  return adapter(rest);
+export async function streamCompletion({
+  provider, useProxy = false, endpoint, apiKey, model, system, turns, signal, onDelta,
+}) {
+  const spec = SPECS[provider];
+  if (!spec) throw new Error('알 수 없는 AI 프로바이더입니다.');
+
+  const res = useProxy
+    ? await requestOrThrow('/api/ai', {
+      method: 'POST',
+      signal,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ provider, model, system, turns }),
+    })
+    : await requestOrThrow(spec.directUrl({ endpoint, model }), {
+      method: 'POST',
+      signal,
+      headers: spec.directHeaders(apiKey),
+      body: JSON.stringify(spec.body({ model, system, turns })),
+    });
+
+  if (!res.ok) await failFrom(res, spec.label);
+  return readStream(res, spec, onDelta);
+}
+
+/**
+ * API 키가 실제로 동작하는지 확인하고, 쓸 수 있는 모델 목록을 가져옵니다. (§4, §38)
+ * 모델 목록 조회는 생성 요청이 아니라서 토큰 비용이 들지 않습니다.
+ * @returns {Promise<{ok: true, models: {id,label}[]} | never>}
+ */
+export async function testConnection({ provider, apiKey, endpoint, signal }) {
+  const spec = SPECS[provider];
+  if (!spec) throw new Error('알 수 없는 AI 프로바이더입니다.');
+  if (!apiKey) {
+    const err = new Error('API 키를 먼저 입력해 주세요.');
+    err.status = 0;
+    throw err;
+  }
+
+  const res = await requestOrThrow(spec.modelsUrl({ endpoint }), {
+    method: 'GET',
+    signal,
+    headers: spec.modelsHeaders(apiKey),
+  });
+  if (!res.ok) await failFrom(res, spec.label);
+
+  let models = [];
+  try {
+    models = spec.modelsOf(await res.json());
+  } catch {
+    models = [];   // 목록을 못 읽어도 연결 자체는 성공입니다
+  }
+  return { ok: true, models };
+}
+
+/** 프로바이더 표시 이름 */
+export function providerLabel(provider) {
+  return SPECS[provider]?.label || provider;
 }
