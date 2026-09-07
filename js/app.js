@@ -1736,7 +1736,15 @@ el.bottomNav.addEventListener('click', (e) => {
 
   if (to === 'settings') { openSettings(); return; }
   if (to === 'camera') {
-    setSource('camera');
+    // 화면 공유 중에는 입력 소스를 바꾸지 않습니다.
+    // 앱에서는 화면 공유가 주 흐름이라, 실수로 눌러 공유가 끊기면 안 됩니다.
+    // 이때는 캡처 화면으로 이동만 하고, 바꾸려면 위쪽 탭을 직접 누르게 합니다.
+    if (nativeSharing() || capture.isStreaming) {
+      // 상태 표시는 건드리지 않습니다 — 공유가 그대로 살아 있다는 뜻이므로.
+      flashNavHint('화면 공유 중입니다. 카메라로 바꾸려면 위쪽 탭을 눌러 주세요.');
+    } else {
+      setSource('camera');
+    }
     document.querySelector('.panel-capture')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } else if (to === 'notes') {
     showNotesPanel(true);
@@ -1753,6 +1761,23 @@ el.bottomNav.addEventListener('click', (e) => {
     b.setAttribute('aria-current', String(b === btn));
   }
 });
+
+/** 하단 네비에서 막힌 동작을 했을 때 잠깐 알려 줍니다. */
+let navHintTimer = null;
+function flashNavHint(message) {
+  let hint = document.getElementById('nav-hint');
+  if (!hint) {
+    hint = document.createElement('div');
+    hint.id = 'nav-hint';
+    hint.className = 'nav-hint';
+    hint.setAttribute('role', 'status');
+    document.body.append(hint);
+  }
+  hint.textContent = message;
+  hint.hidden = false;
+  clearTimeout(navHintTimer);
+  navHintTimer = setTimeout(() => { hint.hidden = true; }, 2600);
+}
 
 /* ── 오답노트 (§25) ────────────────────────────── */
 

@@ -835,3 +835,21 @@ body[data-view="steps"] .sol-section[data-key="concept"] { display: none; }
   outline-offset: 2px;
   border-radius: 6px;
 }
+
+/* 하단 네비에서 막힌 동작을 알려 주는 짧은 안내 */
+.nav-hint {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--nav-h) + 12px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 50;
+  max-width: min(92vw, 420px);
+  padding: 10px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 13px;
+  text-align: center;
+  box-shadow: 0 6px 20px rgba(0,0,0,.45);
+}
