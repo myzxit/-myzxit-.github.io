@@ -47,6 +47,7 @@ const el = {
   answer: $('answer'),
   answerScroll: $('answer-scroll'),
   detail: $('detail'),
+  btnNewSession: $('btn-new-session'),
   btnCopy: $('btn-copy'),
   btnAbort: $('btn-abort'),
   followupForm: $('followup-form'),
@@ -191,6 +192,7 @@ const state = {
   busy: false,
   controller: null,
   turns: [],
+  session: [],          // 이번 세션에서 푼 문제들의 요약 (다음 질문의 문맥)
   lastImage: null,
   history: [],
   activeHistory: null,
@@ -393,6 +395,68 @@ function revealAnswer() {
   }
 }
 
+/* ── 세션 기억 ─────────────────────────────────── */
+//
+// 화면 공유를 새로 시작하기 전까지는 이번 세션에서 푼 문제를 모두 기억해서,
+// "지금까지 정답 알려줘" 같은 질문에 답하고 앞 문제를 참고할 수 있게 합니다.
+// 다만 지난 문제의 이미지까지 매번 다시 보내면 비용과 지연이 급격히 늘어나므로,
+// 이미지는 현재 문제만 보내고 앞 문제들은 `문제/정답` 요약 텍스트로만 넣습니다.
+
+const SESSION_LIMIT = 30;
+
+/** 답변에서 다음 문맥으로 남길 부분만 뽑아냅니다. */
+function summarizeSolved(text) {
+  const { question, answer, filled } = splitFinalAnswer(text);
+  const head = [
+    question ? `문제: ${question}` : null,
+    answer ? `정답: ${answer}` : null,
+    filled ? `완성: ${filled}` : null,
+  ].filter(Boolean).join('\n');
+  return head || (text || '').slice(0, 400);
+}
+
+/** 앞서 푼 문제들을 대화 형식(user/assistant 교대)으로 만듭니다. */
+function sessionTurns() {
+  const turns = [];
+  state.session.forEach((item, i) => {
+    turns.push({ role: 'user', text: `(이번 세션에서 ${i + 1}번째로 푼 문제)` });
+    turns.push({ role: 'assistant', text: item.summary });
+  });
+  return turns;
+}
+
+function rememberSolved(text) {
+  state.session.push({ summary: summarizeSolved(text) });
+  if (state.session.length > SESSION_LIMIT) state.session.shift();
+  syncSessionBadge();
+}
+
+function syncSessionBadge() {
+  const n = state.session.length;
+  el.btnNewSession.textContent = n ? `🆕 새로 시작 (${n})` : '🆕 새로 시작';
+  el.btnNewSession.title = n
+    ? `이번 세션에서 ${n}문제를 기억하고 있습니다. 누르면 모두 지우고 새로 시작합니다.`
+    : '기억한 문제가 없습니다.';
+}
+
+/**
+ * 새 세션 시작 — 이전 대화·기록을 모두 지웁니다.
+ * 화면 공유/카메라를 새로 켤 때, 그리고 '새로 시작'을 누를 때 호출합니다.
+ */
+function beginSession() {
+  state.session = [];
+  state.turns = [];
+  state.lastImage = null;
+  state.history = [];
+  state.activeHistory = null;
+  el.answer.innerHTML = '<div class="placeholder"><p>새 세션을 시작했습니다. 이전 대화는 기억하지 않습니다.</p></div>';
+  el.btnCopy.disabled = true;
+  el.followup.disabled = true;
+  el.btnFollowup.disabled = true;
+  drawHistory();
+  syncSessionBadge();
+}
+
 /* ── 분석 실행 ─────────────────────────────────── */
 async function solve({ followup = null } = {}) {
   if (state.busy) return;
@@ -418,7 +482,8 @@ async function solve({ followup = null } = {}) {
       return;
     }
     state.lastImage = dataUrl;
-    state.turns = [{ role: 'user', text: SOLVE_INSTRUCTION, image }];
+    // 앞서 푼 문제들(요약) + 지금 문제(이미지)
+    state.turns = [...sessionTurns(), { role: 'user', text: SOLVE_INSTRUCTION, image }];
     state.analyzedSig = capture.signature();
     state.lastSolveAt = Date.now();
   }
@@ -469,8 +534,12 @@ async function solve({ followup = null } = {}) {
     state.turns.push({ role: 'assistant', text: full });
     renderAnswer(full, false);
     idleStatus();
-    if (!followup) addHistory(state.lastImage, full);
-    else updateActiveHistory(full);
+    if (!followup) {
+      addHistory(state.lastImage, full);
+      rememberSolved(full);      // 다음 문제·질문이 참고할 수 있게 기억
+    } else {
+      updateActiveHistory(full);
+    }
     el.btnCopy.disabled = false;
     el.followup.disabled = false;
   } catch (err) {
@@ -598,6 +667,7 @@ function drawHistory() {
     btn.addEventListener('click', () => {
       state.activeHistory = h.id;
       state.turns = [
+        ...sessionTurns(),
         { role: 'user', text: SOLVE_INSTRUCTION, image: splitDataUrl(h.image) },
         { role: 'assistant', text: h.text },
       ];
@@ -735,6 +805,7 @@ async function startCapture() {
   try {
     // Android 앱: 시스템 권한창 → MediaProjection (네이티브가 캡처를 이어갑니다)
     if (isNativeScreen()) {
+      beginSession();          // 화면 공유를 새로 켜면 이전 대화는 잊습니다
       androidBridge.setConfig(nativeConfig());
       androidBridge.start();
       return;
@@ -744,6 +815,7 @@ async function startCapture() {
       el.filePhoto.click();
       return;
     }
+    beginSession();            // 새로 켜는 것이므로 이전 대화는 잊습니다
     if (state.source === 'screen') await capture.startScreen();
     else await capture.startCamera();
 
@@ -1002,6 +1074,12 @@ el.btnCropClear.addEventListener('click', () => {
   state.analyzedSig = null;
 });
 
+el.btnNewSession.addEventListener('click', () => {
+  state.controller?.abort();
+  beginSession();
+  idleStatus();
+});
+
 el.btnAbort.addEventListener('click', () => state.controller?.abort());
 
 el.btnCopy.addEventListener('click', async () => {
@@ -1105,6 +1183,7 @@ function init() {
   el.selectFirst.checked = settings.selectFirst;
   el.apiKey.dataset.provider = settings.provider;
   syncProviderBadge();
+  syncSessionBadge();
   drawHistory();
 
   // 화면 공유 탭은 폰에서도 남겨 두고(스크린샷 공유 안내로 바뀝니다),
