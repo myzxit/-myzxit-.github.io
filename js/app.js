@@ -1,8 +1,9 @@
 import { PROVIDERS, loadSettings, saveSettings, activeConfig } from './store.js';
 import { streamCompletion } from './api.js';
 import { Capture, SCREEN_SUPPORTED, CAMERA_SUPPORTED, diffPercent, splitDataUrl } from './capture.js';
-import { renderMarkdown, splitFinalAnswer } from './markdown.js';
-import { buildSystemPrompt, SOLVE_INSTRUCTION } from './prompt.js';
+import { renderMarkdown, splitFinalAnswer, parseSolution } from './markdown.js';
+import { buildSystemPrompt, SOLVE_INSTRUCTION, ACTIONS } from './prompt.js';
+import { checkArithmetic, verifyEquation, evaluate, pretty } from './calc.js';
 import {
   registerServiceWorker, takeSharedImage, onPastedImage, wireInstallButton,
 } from './share.js';
@@ -46,6 +47,9 @@ const el = {
   autoNote: $('auto-note'),
   answer: $('answer'),
   answerScroll: $('answer-scroll'),
+  actions: $('result-actions'),
+  subject: $('subject'),
+  grade: $('grade'),
   detail: $('detail'),
   btnNewSession: $('btn-new-session'),
   btnCopy: $('btn-copy'),
@@ -326,6 +330,8 @@ function openSettings() {
   el.stableMs.value = settings.stableMs;
   el.cooldown.value = settings.cooldown;
   el.lang.value = settings.lang;
+  el.subject.value = settings.subject;
+  el.grade.value = settings.grade;
   el.extra.value = settings.extra;
   el.maxWidth.value = settings.maxWidth;
   syncRangeLabels();
@@ -353,6 +359,8 @@ function persistSettingsFromForm() {
   settings.stableMs = Number(el.stableMs.value);
   settings.cooldown = Number(el.cooldown.value);
   settings.lang = el.lang.value;
+  settings.subject = el.subject.value;
+  settings.grade = el.grade.value;
   settings.extra = el.extra.value;
   settings.maxWidth = Number(el.maxWidth.value);
   if (!saveSettings(settings)) {
@@ -365,16 +373,141 @@ function persistSettingsFromForm() {
 }
 
 /* ── 답변 렌더링 ───────────────────────────────── */
+/**
+ * 결과 아래 액션 버튼을 만듭니다 (§25, §27, §59, §61, §62).
+ * 모두 실제 후속 요청을 보내며, 현재 문제와 풀이 문맥을 그대로 유지합니다.
+ */
+function buildResultActions() {
+  el.actions.innerHTML = '';
+  for (const [key, action] of Object.entries(ACTIONS)) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn action-btn';
+    btn.textContent = action.label;
+    btn.dataset.action = key;
+    btn.addEventListener('click', () => {
+      if (state.busy) return;
+      solve({ followup: action.prompt });
+    });
+    el.actions.append(btn);
+  }
+  const copyAnswer = document.createElement('button');
+  copyAnswer.type = 'button';
+  copyAnswer.className = 'btn action-btn';
+  copyAnswer.textContent = '📋 정답만 복사';
+  copyAnswer.addEventListener('click', async () => {
+    const last = state.turns.filter((t) => t.role === 'assistant').pop();
+    const answer = last ? parseSolution(last.text).sections.answer : null;
+    if (!answer) return;
+    try {
+      await navigator.clipboard.writeText(answer);
+      copyAnswer.textContent = '복사됨';
+      setTimeout(() => { copyAnswer.textContent = '📋 정답만 복사'; }, 1200);
+    } catch {
+      showError('클립보드에 접근하지 못했습니다.');
+    }
+  });
+  el.actions.append(copyAnswer);
+}
+
+/* 결과 화면 구성 (§57, §58) — 접을 수 있는 섹션들 */
+const RESULT_SECTIONS = [
+  { key: 'conditions', icon: '🧩', title: '주어진 조건', open: true },
+  { key: 'target', icon: '❓', title: '구해야 하는 것', open: true },
+  { key: 'concept', icon: '💡', title: '핵심 개념', open: true },
+  { key: 'formula', icon: '📐', title: '공식', open: true },
+  { key: 'steps', icon: '📝', title: '단계별 풀이', open: true },
+  { key: 'check', icon: '🔎', title: '검산', open: true },
+  { key: 'easy', icon: '💬', title: '쉽게 설명하면', open: true },
+  { key: 'caution', icon: '⚠️', title: '실수하기 쉬운 부분', open: false },
+  { key: 'choices', icon: '🔢', title: '선택지 분석', open: false },
+];
+
+const CONFIDENCE_CLASS = { '높음': 'high', '보통': 'mid', '확인필요': 'low' };
+
+/**
+ * AI 가 말한 계산을 앱이 직접 다시 계산합니다 (§30~§32).
+ * AI 의 주장과 무관하게 독립적으로 확인하는 것이 요점입니다.
+ */
+function runCalculationCheck(sections) {
+  const notes = [];
+  // 검증 줄에서 알아낸 변수 값. 풀이 본문의 `3x = 9` 같은 줄도 이 값으로 확인합니다.
+  const vars = {};
+
+  // 1) 방정식이면 답을 원래 식에 대입해 검산합니다.
+  const verify = sections.verify;
+  if (verify) {
+    const [equation, assignment] = verify.split('|').map((p) => p.trim());
+    const m = (assignment || '').match(/^([a-zA-Zα-ω])\s*=\s*(.+)$/);
+    if (equation && m) {
+      const value = evaluate(m[2]);
+      if (value !== null) vars[m[1]] = value;
+      const result = verifyEquation(equation, m[1], m[2]);
+      if (result) {
+        notes.push({
+          ok: result.ok,
+          text: result.ok
+            ? `${m[1]} = ${m[2]} 을 ${equation} 에 대입 → 양변 모두 ${pretty(result.left)} · 검산 통과`
+            : `${m[1]} = ${m[2]} 을 대입하면 ${pretty(result.left)} ≠ ${pretty(result.right)} · 답이 맞지 않습니다`,
+        });
+      }
+    }
+  }
+
+  // 2) 풀이·검산 본문의 숫자 등식을 한 줄씩 다시 계산합니다.
+  const body = [sections.steps, sections.check].filter(Boolean).join('\n');
+  const wrong = checkArithmetic(body, vars).filter((c) => !c.ok);
+  for (const c of wrong.slice(0, 3)) {
+    notes.push({ ok: false, text: `계산이 맞지 않습니다 — ${c.line} (${pretty(c.left)} ≠ ${pretty(c.right)})` });
+  }
+  return notes;
+}
+
+function sectionHtml({ icon, title, open }, content) {
+  return `<details class="sol-section"${open ? ' open' : ''}>`
+    + `<summary><span class="sol-icon">${icon}</span>${title}</summary>`
+    + `<div class="sol-body">${renderMarkdown(content)}</div></details>`;
+}
+
 function renderAnswer(text, streaming) {
-  const { question, answer, filled, body } = splitFinalAnswer(text);
-  // 어떤 문제를 읽었는지 먼저 보여 줘야 엉뚱한 문제를 푼 것을 바로 알 수 있습니다.
-  // 빈칸 문제는 채운 문장까지 보여 줘야 맞는지 바로 확인됩니다.
-  const head =
-    (question ? `<div class="read-question"><span class="label">읽은 문제</span>${escapeText(question)}</div>` : '') +
-    (answer ? `<div class="final-answer"><span class="label">정답</span>${escapeText(answer)}</div>` : '') +
-    (filled ? `<div class="filled-in"><span class="label">빈칸을 채우면</span>${escapeText(filled)}</div>` : '');
-  el.answer.innerHTML = head + renderMarkdown(body) + (streaming ? '<span class="caret"></span>' : '');
-  el.answerScroll.scrollTop = el.answerScroll.scrollHeight;
+  const { sections, body } = parseSolution(text);
+  const has = (k) => sections[k] && sections[k].length;
+
+  let html = '';
+
+  if (has('question')) {
+    html += `<div class="read-question"><span class="label">읽은 문제</span>${escapeText(sections.question)}</div>`;
+  }
+  if (has('answer')) {
+    const conf = sections.confidence;
+    const badge = conf
+      ? `<span class="confidence ${CONFIDENCE_CLASS[conf] || 'mid'}">확신도 ${escapeText(conf)}</span>`
+      : '';
+    html += `<div class="final-answer"><span class="label">🎯 정답${badge}</span>${escapeText(sections.answer)}</div>`;
+  }
+  if (has('filled')) {
+    html += `<div class="filled-in"><span class="label">빈칸을 채우면</span>${escapeText(sections.filled)}</div>`;
+  }
+
+  // 앱이 직접 계산한 검증 결과. 스트리밍이 끝난 뒤에만 판정합니다.
+  if (!streaming) {
+    for (const note of runCalculationCheck(sections)) {
+      html += `<div class="calc-note ${note.ok ? 'ok' : 'bad'}">`
+        + `<span class="label">${note.ok ? '✓ 앱이 직접 검산했습니다' : '⚠ 앱이 계산을 다시 해보니 어긋납니다'}</span>`
+        + `${escapeText(note.text)}</div>`;
+    }
+  }
+
+  for (const spec of RESULT_SECTIONS) {
+    if (has(spec.key)) html += sectionHtml(spec, sections[spec.key]);
+  }
+
+  if (body) html += renderMarkdown(body);
+  if (streaming) html += '<span class="caret"></span>';
+
+  el.answer.innerHTML = html;
+  el.actions.hidden = streaming || !has('answer');
+  el.answerScroll.scrollTop = streaming ? el.answerScroll.scrollHeight : 0;
 }
 
 function escapeText(s) {
@@ -499,6 +632,7 @@ function beginSession() {
   state.activeHistory = null;
   el.answer.innerHTML = '<div class="placeholder"><p>새 세션을 시작했습니다. 이전 대화는 기억하지 않습니다.</p></div>';
   el.btnCopy.disabled = true;
+  el.actions.hidden = true;
   el.followup.disabled = true;
   el.btnFollowup.disabled = true;
   drawHistory();
@@ -577,7 +711,13 @@ async function runAnalysis() {
       endpoint: cfg.endpoint,
       apiKey: cfg.apiKey,
       model: cfg.model,
-      system: buildSystemPrompt({ lang: settings.lang, detail: el.detail.value, extra: settings.extra }),
+      system: buildSystemPrompt({
+        lang: settings.lang,
+        detail: el.detail.value,
+        extra: settings.extra,
+        subject: settings.subject,
+        grade: settings.grade,
+      }),
       turns: state.turns,
       signal: state.controller.signal,
       onDelta: (chunk) => {
@@ -1269,6 +1409,7 @@ function init() {
   el.apiKey.dataset.provider = settings.provider;
   syncProviderBadge();
   syncSessionBadge();
+  buildResultActions();
   drawHistory();
 
   // 화면 공유 탭은 폰에서도 남겨 두고(스크린샷 공유 안내로 바뀝니다),

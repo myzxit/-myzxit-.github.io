@@ -91,24 +91,78 @@ export function renderMarkdown(src) {
   return out.join('\n');
 }
 
-/** 라벨이 붙은 첫 줄(`정답: …`)을 본문에서 떼어냅니다. */
-function takeLabelled(src, pattern) {
-  const m = (src || '').match(pattern);
-  if (!m) return { value: null, rest: src };
-  return {
-    value: m[1].replace(/\*\*/g, '').trim(),
-    rest: (src.slice(0, m.index) + src.slice(m.index + m[0].length)).replace(/^\s*\n/, ''),
-  };
+/**
+ * `라벨:` 블록으로 나뉜 풀이 응답을 구조화합니다. (js/prompt.js 의 출력 형식)
+ *
+ * 스트리밍 중에도 계속 호출되므로, 아직 도착하지 않은 블록은 그냥 비어 있습니다.
+ * 알려진 라벨이 하나도 없으면 전체를 body 로 돌려주어 예전 형식·자유 형식도 그대로 보입니다.
+ */
+// 한 줄짜리 블록. 다음 줄부터는 이 블록에 이어 붙이지 않습니다.
+// (형식을 따르지 않는 응답에서 `정답:` 이 본문 전체를 삼키는 것을 막습니다)
+const SINGLE_LINE = new Set(['question', 'answer', 'filled', 'verify', 'confidence']);
+
+const SECTION_LABELS = [
+  ['question', ['문제', 'Question']],
+  ['answer', ['정답', '답', 'Answer']],
+  ['filled', ['완성', 'Completed']],
+  ['verify', ['검증']],
+  ['conditions', ['조건', '주어진 조건']],
+  ['target', ['구할것', '구할 것', '구해야 하는 것']],
+  ['concept', ['개념', '핵심 개념']],
+  ['formula', ['공식']],
+  ['steps', ['풀이', '단계별 풀이']],
+  ['check', ['검산']],
+  ['easy', ['쉽게', '쉽게 설명하면']],
+  ['caution', ['주의', '실수하기 쉬운 부분']],
+  ['choices', ['선택지', '선택지 분석']],
+  ['confidence', ['확신도']],
+];
+
+const LABEL_PATTERN = new RegExp(
+  `^\\s*(?:\\*\\*)?(${SECTION_LABELS.flatMap(([, names]) => names).join('|')})(?:\\*\\*)?\\s*[:：]\\s*(.*)$`,
+);
+
+function keyForLabel(label) {
+  for (const [key, names] of SECTION_LABELS) if (names.includes(label)) return key;
+  return null;
 }
 
 /**
- * 답변 머리의 `문제: …` / `정답: …` / `완성: …` 줄을 찾아 강조 영역으로 분리합니다.
- * 어떤 문제를 읽었는지, 빈칸을 채운 결과가 무엇인지 한눈에 확인하기 위한 것입니다.
- * @returns {{question: string|null, answer: string|null, filled: string|null, body: string}}
+ * @returns {{sections: Record<string,string>, body: string}}
+ *   sections: 찾은 블록들, body: 라벨이 없는 나머지 본문
+ */
+export function parseSolution(src) {
+  const lines = String(src || '').split('\n');
+  const sections = {};
+  const body = [];
+  let current = null;
+
+  for (const line of lines) {
+    const m = line.match(LABEL_PATTERN);
+    const key = m ? keyForLabel(m[1]) : null;
+    if (key) {
+      sections[key] = m[2].trim();
+      current = SINGLE_LINE.has(key) ? null : key;
+      continue;
+    }
+    if (current) sections[current] += (sections[current] ? '\n' : '') + line;
+    else body.push(line);
+  }
+
+  for (const key of Object.keys(sections)) sections[key] = sections[key].trim();
+  return { sections, body: body.join('\n').trim() };
+}
+
+/**
+ * 예전(자유) 형식과의 호환용. `문제:` / `정답:` / `완성:` 만 뽑아냅니다.
+ * @returns {{question, answer, filled, body}}
  */
 export function splitFinalAnswer(src) {
-  const q = takeLabelled(src, /^\s*(?:\*\*)?(?:문제|Question|QUESTION)(?:\*\*)?\s*[:：]\s*(.+)$/m);
-  const a = takeLabelled(q.rest, /^\s*(?:\*\*)?(?:정답|답|Answer|ANSWER)(?:\*\*)?\s*[:：]\s*(.+)$/m);
-  const f = takeLabelled(a.rest, /^\s*(?:\*\*)?(?:완성|완성된 문장|Completed)(?:\*\*)?\s*[:：]\s*(.+)$/m);
-  return { question: q.value, answer: a.value, filled: f.value, body: f.rest };
+  const { sections, body } = parseSolution(src);
+  return {
+    question: sections.question || null,
+    answer: sections.answer || null,
+    filled: sections.filled || null,
+    body,
+  };
 }

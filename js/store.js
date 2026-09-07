@@ -57,6 +57,8 @@ export const DEFAULTS = {
   sensitivity: 6,   // 1~20, 클수록 둔감
   lang: 'ko',
   detail: 'brief',
+  subject: 'auto',   // 과목 (auto 면 AI 가 분류)
+  grade: 'auto',     // 학년 — 설명 눈높이
   extra: '',
   maxWidth: 1400,
   autoMode: true,

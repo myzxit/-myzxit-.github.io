@@ -286,6 +286,77 @@ textarea.input { resize: vertical; font-family: inherit; }
   letter-spacing: .04em; margin-bottom: 2px; font-weight: 500;
 }
 
+/* ── 구조화된 풀이 결과 (§57, §58) ─────────────── */
+.sol-section {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  margin: 0 0 8px;
+  background: var(--bg-soft);
+  overflow: hidden;
+}
+.sol-section > summary {
+  cursor: pointer;
+  padding: 9px 13px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  user-select: none;
+}
+.sol-section > summary::-webkit-details-marker { display: none; }
+.sol-section > summary::after {
+  content: '▾';
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+  transition: transform .15s;
+}
+.sol-section:not([open]) > summary::after { transform: rotate(-90deg); }
+.sol-section > summary:hover { background: var(--panel-2); }
+.sol-icon { font-size: 14px; }
+.sol-body { padding: 2px 13px 10px; font-size: 14px; }
+.sol-body > *:last-child { margin-bottom: 0; }
+
+/* 앱이 직접 계산해 본 결과 (§30~§32) */
+.calc-note {
+  border-radius: 10px;
+  padding: 9px 13px;
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.calc-note .label { display: block; font-size: 11px; letter-spacing: .03em; margin-bottom: 2px; }
+.calc-note.ok { background: #12251d; border: 1px solid #2b7d5d; color: #cfeee0; }
+.calc-note.ok .label { color: var(--accent-2); }
+.calc-note.bad { background: #251f12; border: 1px solid #5c4a2d; color: #f2ddb8; }
+.calc-note.bad .label { color: var(--warn); }
+
+.confidence {
+  float: right;
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+}
+.confidence.high { color: var(--accent-2); border-color: #2b7d5d; }
+.confidence.mid { color: var(--muted); }
+.confidence.low { color: var(--warn); border-color: #5c4a2d; }
+
+/* 결과 액션 (§59) */
+.result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--panel-2);
+}
+.action-btn { font-size: 12.5px; padding: 7px 11px; }
+
 .read-question {
   background: var(--bg-soft);
   border: 1px solid var(--line);
@@ -477,6 +548,77 @@ details.field[open] { gap: 12px; }
   display: block; font-size: 11px; color: var(--accent-2);
   letter-spacing: .04em; margin-bottom: 2px; font-weight: 500;
 }
+
+/* ── 구조화된 풀이 결과 (§57, §58) ─────────────── */
+.sol-section {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  margin: 0 0 8px;
+  background: var(--bg-soft);
+  overflow: hidden;
+}
+.sol-section > summary {
+  cursor: pointer;
+  padding: 9px 13px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  user-select: none;
+}
+.sol-section > summary::-webkit-details-marker { display: none; }
+.sol-section > summary::after {
+  content: '▾';
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+  transition: transform .15s;
+}
+.sol-section:not([open]) > summary::after { transform: rotate(-90deg); }
+.sol-section > summary:hover { background: var(--panel-2); }
+.sol-icon { font-size: 14px; }
+.sol-body { padding: 2px 13px 10px; font-size: 14px; }
+.sol-body > *:last-child { margin-bottom: 0; }
+
+/* 앱이 직접 계산해 본 결과 (§30~§32) */
+.calc-note {
+  border-radius: 10px;
+  padding: 9px 13px;
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.calc-note .label { display: block; font-size: 11px; letter-spacing: .03em; margin-bottom: 2px; }
+.calc-note.ok { background: #12251d; border: 1px solid #2b7d5d; color: #cfeee0; }
+.calc-note.ok .label { color: var(--accent-2); }
+.calc-note.bad { background: #251f12; border: 1px solid #5c4a2d; color: #f2ddb8; }
+.calc-note.bad .label { color: var(--warn); }
+
+.confidence {
+  float: right;
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+}
+.confidence.high { color: var(--accent-2); border-color: #2b7d5d; }
+.confidence.mid { color: var(--muted); }
+.confidence.low { color: var(--warn); border-color: #5c4a2d; }
+
+/* 결과 액션 (§59) */
+.result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--panel-2);
+}
+.action-btn { font-size: 12.5px; padding: 7px 11px; }
 
 .read-question {
   background: var(--bg-soft);
