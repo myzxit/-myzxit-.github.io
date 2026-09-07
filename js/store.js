@@ -6,6 +6,8 @@ const KEY = 'screensolver.settings.v2';
 export const PROVIDERS = {
   claude: {
     label: 'Claude (Anthropic)',
+    free: false,
+    cost: '유료 · 크레딧 충전 필요',
     keyPlaceholder: 'sk-ant-...',
     keyUrl: 'https://console.anthropic.com/settings/keys',
     defaultEndpoint: 'https://api.anthropic.com/v1/messages',
@@ -17,6 +19,8 @@ export const PROVIDERS = {
   },
   openai: {
     label: 'ChatGPT (OpenAI)',
+    free: false,
+    cost: '유료 · 크레딧 충전 필요',
     keyPlaceholder: 'sk-...',
     keyUrl: 'https://platform.openai.com/api-keys',
     defaultEndpoint: 'https://api.openai.com/v1/chat/completions',
@@ -28,12 +32,15 @@ export const PROVIDERS = {
   },
   gemini: {
     label: 'Gemini (Google)',
+    free: true,
+    cost: '무료 등급 있음',
     keyPlaceholder: 'AIza...',
     keyUrl: 'https://aistudio.google.com/apikey',
     defaultEndpoint: 'https://generativelanguage.googleapis.com/v1beta',
     models: [
-      { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro (권장)' },
-      { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (빠름)' },
+      { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (무료 등급 · 권장)' },
+      { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash (무료 등급)' },
+      { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro (고성능 · 무료 등급 제한적)' },
     ],
   },
 };
@@ -41,7 +48,7 @@ export const PROVIDERS = {
 export const DEFAULTS = {
   provider: 'claude',
   keys: { claude: '', openai: '', gemini: '' },
-  models: { claude: 'claude-sonnet-5', openai: 'gpt-5', gemini: 'gemini-2.5-pro' },
+  models: { claude: 'claude-sonnet-5', openai: 'gpt-5', gemini: 'gemini-2.5-flash' },
   endpoints: { claude: '', openai: '', gemini: '' }, // 비우면 기본 엔드포인트 사용
   source: '',       // 사용자가 고른 입력 소스. 비어 있으면 기기에 맞춰 자동 선택합니다.
   interval: 1500,   // 프레임 확인 주기(ms)

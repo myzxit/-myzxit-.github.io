@@ -65,9 +65,16 @@ ScreenSolver 앱 → 📱 내 화면 공유 → Android 시스템 권한창 → 
 
 1. 사이트를 엽니다. (또는 로컬에서 `python3 -m http.server` 후 `http://localhost:8000`)
 2. ⚙️ **설정**에서 프로바이더를 고르고 API 키를 넣은 뒤 **저장**을 누릅니다.
-   - Claude: https://console.anthropic.com/settings/keys
-   - ChatGPT: https://platform.openai.com/api-keys
-   - Gemini: https://aistudio.google.com/apikey
+
+   | 프로바이더 | 비용 | 키 발급 |
+   | --- | --- | --- |
+   | ✅ **Gemini** | **무료 등급 있음** — 카드 등록 없이 바로 사용 | https://aistudio.google.com/apikey |
+   | Claude | 유료 · 크레딧 충전 필요 | https://console.anthropic.com/settings/keys |
+   | ChatGPT | 유료 · 크레딧 충전 필요 | https://platform.openai.com/api-keys |
+
+   **무료로만 쓰려면 Gemini 를 고르세요.** Claude 와 ChatGPT 는 무료 등급이 없어, 키를 만들어도 결제 크레딧이 없으면 `credit balance is too low` / `insufficient_quota` 오류가 납니다. 이 경우 앱이 그 뜻을 한국어로 알려 줍니다.
+
+   Gemini 무료 등급에서는 **Gemini 2.5 Flash**(기본값)를 권장합니다. Pro 모델은 무료 등급 제한이 있어 `quota` 오류가 날 수 있습니다.
 3. 입력 소스를 고릅니다.
    - PC — **화면 공유 시작** → 문제가 보이는 탭·창·화면 선택
    - 폰 — **카메라 켜기** 후 문제를 비추거나, **사진** 탭에서 촬영/선택

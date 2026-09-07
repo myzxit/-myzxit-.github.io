@@ -38,14 +38,29 @@ async function failFrom(response, provider) {
     }
   } catch { /* 본문을 읽지 못한 경우 상태코드만 사용 */ }
 
-  const hints = {
-    401: 'API 키가 올바른지 확인하세요.',
-    403: 'API 키에 이 모델 사용 권한이 있는지 확인하세요.',
-    404: '모델 이름 또는 엔드포인트가 올바른지 확인하세요.',
-    429: '요청 한도(rate limit)에 걸렸습니다. 잠시 후 다시 시도하세요.',
-  };
-  const hint = hints[response.status] ? ` ${hints[response.status]}` : '';
-  const err = new Error(`${provider} 오류 ${response.status}: ${detail.slice(0, 400) || response.statusText}${hint}`);
+  // 실제로 자주 겪는 실패를 한국어로 풀어 줍니다. (키 값 자체는 절대 출력하지 않습니다)
+  let hint = {
+    400: '요청이 거부되었습니다. 모델 이름과 이미지 크기를 확인하세요.',
+    401: 'API 키가 올바르지 않습니다. 앞뒤 공백 없이 다시 붙여넣어 보세요.',
+    403: '이 API 키로는 해당 모델을 쓸 수 없습니다. 다른 모델을 선택해 보세요.',
+    404: '모델 이름 또는 엔드포인트가 올바르지 않습니다. 설정에서 모델을 바꿔 보세요.',
+    413: '이미지가 너무 큽니다. 설정에서 전송 이미지 최대 가로를 줄이세요.',
+    429: '요청 한도에 걸렸습니다. 잠시 후 다시 시도하세요.',
+    500: '서비스 쪽 일시적인 오류입니다. 잠시 후 다시 시도하세요.',
+    503: '서비스가 혼잡합니다. 잠시 후 다시 시도하세요.',
+  }[response.status] || '';
+
+  // 잔액/무료 등급 문제는 원인이 전혀 다르므로 따로 안내합니다.
+  if (/credit balance|billing|insufficient_quota|quota|exceeded your current quota|free tier/i.test(detail)) {
+    hint = provider === 'Gemini'
+      ? '무료 등급 사용량을 초과했거나 이 모델이 무료 등급에서 지원되지 않습니다. 설정에서 모델을 Gemini 2.5 Flash 로 바꾸거나 잠시 후 다시 시도하세요.'
+      : `${provider} 는 무료 등급이 없어 결제 크레딧이 있어야 API 가 동작합니다. 무료로 쓰려면 설정에서 Gemini 를 선택하세요.`;
+  }
+
+  const err = new Error(
+    `${provider} 오류 ${response.status}: ${detail.slice(0, 300) || response.statusText}` +
+    (hint ? `\n\n→ ${hint}` : ''),
+  );
   err.status = response.status;
   throw err;
 }

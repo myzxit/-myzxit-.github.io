@@ -163,6 +163,13 @@ function isNativeScreen() {
   return IS_ANDROID_APP && state.source === 'screen';
 }
 
+/** 네이티브 화면 공유가 실제로 돌고 있는지 (첫 프레임 전이어도 true) */
+function nativeSharing() {
+  if (!IS_ANDROID_APP) return false;
+  if (capture.mode === 'native') return true;
+  try { return !!androidBridge.status().running; } catch { return false; }
+}
+
 let settings = loadSettings();
 const capture = new Capture(el.preview, el.still, el.work, el.thumb);
 
@@ -615,7 +622,12 @@ el.cropLayer.addEventListener('pointercancel', () => { cropDrag = null; endCropM
  * @param {boolean} thenSolve 영역을 고르면 바로 풀이할지 (스크린샷을 받았을 때)
  */
 function startCropMode(thenSolve = false) {
-  if (!capture.active) return;
+  if (!capture.active) {
+    if (nativeSharing()) {
+      showError('아직 받아온 화면이 없습니다. ⚡ 지금 풀기를 누르거나, 문제 화면으로 이동해 자동 분석을 기다린 뒤 영역을 지정하세요.');
+    }
+    return;
+  }
   state.selectThenSolve = thenSolve;
   // 풀이 결과로 스크롤된 뒤라면 캡처 화면이 화면 밖에 있을 수 있습니다.
   // 드래그할 대상이 보이지 않으면 영역 지정이 불가능하므로 먼저 올려 줍니다.
@@ -871,8 +883,14 @@ capture.onEnded = () => stopCapture();
 
 el.btnSolve.addEventListener('click', () => {
   // 네이티브 공유 중에는 "지금 화면"을 새로 받아서 풀이합니다.
-  if (capture.mode === 'native') androidBridge.requestFrame();
-  else solve();
+  // 첫 프레임이 오기 전에도 동작해야 하므로 capture.mode 가 아니라
+  // 네이티브 실행 여부로 판단합니다.
+  if (nativeSharing()) {
+    setStatus('화면 받는 중…', 'busy');
+    androidBridge.requestFrame();
+  } else {
+    solve();
+  }
 });
 el.btnCrop.addEventListener('click', () => startCropMode(false));
 
