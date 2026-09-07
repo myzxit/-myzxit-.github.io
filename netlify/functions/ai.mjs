@@ -89,6 +89,38 @@ const PROVIDERS = {
 /** 이미지까지 담기므로 넉넉히, 그러나 무제한은 아닙니다. */
 const MAX_BODY_BYTES = 12 * 1024 * 1024;
 
+/*
+ * 남용 방지 (§68).
+ *
+ * 서버에 키가 설정되어 있으면 이 주소를 아는 사람은 누구나 사이트 주인의
+ * API 크레딧을 쓸 수 있습니다. 최소한의 제동을 겁니다.
+ *
+ * 한계를 분명히 해 둡니다: 함수 인스턴스의 메모리에만 기록하므로, 인스턴스가
+ * 여러 개로 늘어나거나 콜드 스타트가 나면 카운터가 초기화됩니다. 실수로 인한
+ * 폭주와 가벼운 남용은 막지만, 작정한 공격을 막는 수단은 아닙니다.
+ * 정말로 막아야 한다면 환경변수를 지워 프록시를 끄거나(사용자가 자기 키를
+ * 입력하는 방식으로 동작합니다) PROXY_ACCESS_CODE 를 설정하세요.
+ */
+const WINDOW_MS = 10 * 60 * 1000;
+const MAX_PER_WINDOW = Number(process.env.PROXY_RATE_LIMIT || 20);
+const hits = new Map();   // ip → number[] (요청 시각)
+
+function rateLimited(ip) {
+  if (MAX_PER_WINDOW <= 0) return false;      // 0 이면 제한 없음
+  const now = Date.now();
+  const recent = (hits.get(ip) || []).filter((t) => now - t < WINDOW_MS);
+  recent.push(now);
+  hits.set(ip, recent);
+
+  // 메모리가 무한히 늘지 않도록 오래된 항목을 정리합니다.
+  if (hits.size > 5000) {
+    for (const [key, times] of hits) {
+      if (!times.some((t) => now - t < WINDOW_MS)) hits.delete(key);
+    }
+  }
+  return recent.length > MAX_PER_WINDOW;
+}
+
 const json = (status, data) =>
   new Response(JSON.stringify(data), {
     status,
@@ -101,6 +133,19 @@ export default async (req) => {
   const length = Number(req.headers.get('content-length') || 0);
   if (length > MAX_BODY_BYTES) {
     return json(413, { error: '이미지가 너무 큽니다. 설정에서 전송 이미지 최대 가로를 줄여 주세요.' });
+  }
+
+  // 접근 코드가 설정돼 있으면 아는 사람만 서버 키를 쓸 수 있습니다 (§68).
+  const code = process.env.PROXY_ACCESS_CODE;
+  if (code && req.headers.get('x-screensolver-code') !== code) {
+    return json(403, { error: '이 서버의 AI 사용 권한이 없습니다. 설정에서 직접 API 키를 입력해 주세요.' });
+  }
+
+  const ip = req.headers.get('x-nf-client-connection-ip')
+    || req.headers.get('x-forwarded-for')?.split(',')[0].trim()
+    || 'unknown';
+  if (rateLimited(ip)) {
+    return json(429, { error: '요청이 너무 잦습니다. 잠시 후 다시 시도해 주세요.' });
   }
 
   let payload;
