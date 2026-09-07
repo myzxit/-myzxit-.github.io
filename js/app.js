@@ -3,7 +3,7 @@ import {
   forgetAllKeys, modelOptions,
 } from './store.js';
 import { streamCompletion, testConnection } from './api.js';
-import { probeProxy, proxyStatus, proxyHasKey } from './proxy.js';
+import { probeProxy, proxyStatus, proxyHasKey, proxyNeedsCode } from './proxy.js';
 import { loadNotes, addNote, removeNote, clearNotes, hasNote, notesSizeKb } from './wrongnotes.js';
 import { Capture, SCREEN_SUPPORTED, CAMERA_SUPPORTED, diffPercent, splitDataUrl } from './capture.js';
 import { renderMarkdown, splitFinalAnswer, parseSolution } from './markdown.js';
@@ -77,6 +77,8 @@ const el = {
   btnTestKey: $('btn-test-key'),
   keyTestResult: $('key-test-result'),
   proxyNote: $('proxy-note'),
+  proxyCodeField: $('proxy-code-field'),
+  proxyCode: $('proxy-code'),
   rememberKeys: $('remember-keys'),
   keyExpiry: $('key-expiry'),
   btnRefreshModels: $('btn-refresh-models'),
@@ -394,6 +396,7 @@ function syncProxyNote() {
   if (!status.proxy) { el.proxyNote.hidden = true; return; }
 
   el.proxyNote.hidden = false;
+  el.proxyCodeField.hidden = !proxyNeedsCode();
   if (proxyHasKey(provider)) {
     el.proxyNote.className = 'muted ok';
     el.proxyNote.textContent = settings.preferProxy !== false
@@ -401,7 +404,9 @@ function syncProxyNote() {
       : '🔒 이 서버에 키가 있지만 "서버로 요청"이 꺼져 있어 직접 입력한 키를 씁니다.';
   } else {
     el.proxyNote.className = 'muted';
-    el.proxyNote.textContent = '이 서버에는 이 프로바이더의 키가 없습니다. 직접 입력한 키로 동작합니다.';
+    el.proxyNote.textContent = status.enabled
+      ? '이 서버에는 이 프로바이더의 키가 없습니다. 직접 입력한 키로 동작합니다.'
+      : '이 서버는 공용 AI 사용이 꺼져 있습니다. 직접 입력한 키로 동작합니다.';
   }
 }
 
@@ -447,6 +452,7 @@ function openSettings() {
   el.keyExpiry.value = String(settings.keyExpiryHours || 0);
   el.preferProxy.checked = settings.preferProxy !== false;
   el.debugMode.checked = Boolean(settings.debug);
+  el.proxyCode.value = settings.proxyCode || '';
   el.keyTestResult.textContent = '';
   el.keyTestResult.className = 'test-result';
   syncProxyNote();
@@ -483,6 +489,7 @@ function persistSettingsFromForm() {
   settings.keyExpiryHours = Number(el.keyExpiry.value) || 0;
   settings.preferProxy = el.preferProxy.checked;
   settings.debug = el.debugMode.checked;
+  settings.proxyCode = el.proxyCode.value.trim();
   // 저장을 끄면 이미 저장돼 있던 키도 기기에서 지웁니다 (§39).
   if (!settings.rememberKeys) delete settings.keysSavedAt;
   if (!saveSettings(settings)) {
@@ -1007,6 +1014,7 @@ async function runAnalysis() {
     const full = await streamCompletion({
       provider: cfg.provider,
       useProxy: cfg.useProxy,
+      accessCode: cfg.accessCode,
       endpoint: cfg.endpoint,
       apiKey: cfg.apiKey,
       model: cfg.model,

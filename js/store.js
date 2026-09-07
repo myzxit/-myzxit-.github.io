@@ -85,6 +85,7 @@ export const DEFAULTS = {
   keyExpiryHours: 0,  // 저장한 키 자동 만료. 0 이면 만료 없음 (§39)
   preferProxy: true,  // 서버에 키가 있으면 그쪽을 우선 사용 (§2B)
   debug: false,       // 디버그 정보 표시 (§60)
+  proxyCode: '',      // 서버 접근 코드 (서버가 요구할 때만 사용)
   customModels: { claude: [], openai: [], gemini: [] },  // 직접 추가한 모델 ID (§4)
 };
 
@@ -212,6 +213,7 @@ export function activeConfig(s) {
     meta,
     apiKey,
     useProxy,
+    accessCode: (s.proxyCode || '').trim(),
     // 프록시를 쓰면 브라우저에 키가 없어도 요청할 수 있습니다.
     ready: useProxy || Boolean(apiKey),
     model: s.models[p] || meta.models[0].id,

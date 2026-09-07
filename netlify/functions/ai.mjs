@@ -105,6 +105,22 @@ const WINDOW_MS = 10 * 60 * 1000;
 const MAX_PER_WINDOW = Number(process.env.PROXY_RATE_LIMIT || 20);
 const hits = new Map();   // ip → number[] (요청 시각)
 
+/**
+ * 서버 키를 실제로 내어 줄지 (§68).
+ *
+ * 키가 환경변수에 "있다"는 것과 "아무나 써도 된다"는 것은 다릅니다. 사이트가
+ * 공개되어 있으면 주소를 아는 누구나 사이트 주인의 크레딧을 쓰게 되므로,
+ * 기본값은 꺼짐입니다. 주인이 다음 중 하나를 명시적으로 설정해야 켜집니다.
+ *
+ *   PROXY_ENABLED=true       — 누구나 서버 키로 사용 (비용은 사이트 주인 부담)
+ *   PROXY_ACCESS_CODE=<코드>  — 코드를 아는 사람만 사용
+ *
+ * 꺼져 있으면 사이트는 그대로 동작하고, 각 사용자가 자기 키를 입력합니다.
+ */
+export function proxyEnabled() {
+  return process.env.PROXY_ENABLED === 'true' || Boolean(process.env.PROXY_ACCESS_CODE);
+}
+
 function rateLimited(ip) {
   if (MAX_PER_WINDOW <= 0) return false;      // 0 이면 제한 없음
   const now = Date.now();
@@ -135,10 +151,18 @@ export default async (req) => {
     return json(413, { error: '이미지가 너무 큽니다. 설정에서 전송 이미지 최대 가로를 줄여 주세요.' });
   }
 
-  // 접근 코드가 설정돼 있으면 아는 사람만 서버 키를 쓸 수 있습니다 (§68).
+  // 주인이 명시적으로 켜지 않았으면 서버 키를 쓰지 않습니다 (§68).
+  if (!proxyEnabled()) {
+    return json(501, {
+      error: '이 서버는 공용 AI 사용이 꺼져 있습니다. 설정에서 직접 API 키를 입력해 주세요.',
+      configured: false,
+    });
+  }
+
+  // 접근 코드가 설정돼 있으면 아는 사람만 서버 키를 쓸 수 있습니다.
   const code = process.env.PROXY_ACCESS_CODE;
   if (code && req.headers.get('x-screensolver-code') !== code) {
-    return json(403, { error: '이 서버의 AI 사용 권한이 없습니다. 설정에서 직접 API 키를 입력해 주세요.' });
+    return json(403, { error: '서버 접근 코드가 올바르지 않습니다. 설정에서 코드를 확인하거나 직접 API 키를 입력해 주세요.' });
   }
 
   const ip = req.headers.get('x-nf-client-connection-ip')

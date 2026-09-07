@@ -253,6 +253,14 @@
       <small class="muted" id="proxy-note" hidden></small>
     </label>
 
+    <!-- 서버 접근 코드 (서버가 요구할 때만 보입니다) -->
+    <label class="field" id="proxy-code-field" hidden>
+      <span>서버 접근 코드</span>
+      <input type="password" id="proxy-code" class="input" autocomplete="off"
+             spellcheck="false" placeholder="사이트 관리자에게 받은 코드" />
+      <small class="muted">이 서버는 코드를 아는 사람만 서버 키를 쓸 수 있습니다. 코드가 없으면 직접 API 키를 입력하세요.</small>
+    </label>
+
     <!-- API 키 저장 방식 (§39) -->
     <div class="field-row">
       <label class="field checkbox-field">

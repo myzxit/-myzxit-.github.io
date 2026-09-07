@@ -7,8 +7,8 @@
 // 함수가 없는 환경(GitHub Pages, Android 앱 내장 자산)에서는 조회가 실패하는데,
 // 그건 오류가 아니라 "프록시 없음" 입니다. 조용히 1) 로 동작합니다.
 
-/** @type {{proxy: boolean, configured: Record<string, boolean>}} */
-let status = { proxy: false, configured: {} };
+/** @type {{proxy: boolean, enabled: boolean, needsCode: boolean, configured: Record<string, boolean>}} */
+let status = { proxy: false, enabled: false, needsCode: false, configured: {} };
 let probed = null;
 
 const CACHE_KEY = 'screensolver.proxy.v1';
@@ -43,7 +43,14 @@ export function probeProxy() {
       // 정적 호스팅의 404 페이지(HTML)를 응답으로 오해하지 않도록 함께 확인합니다.
       if (res.ok && type.includes('application/json')) {
         const body = await res.json();
-        if (body && body.proxy) status = { proxy: true, configured: body.configured || {} };
+        if (body && body.proxy) {
+          status = {
+            proxy: true,
+            enabled: Boolean(body.enabled),
+            needsCode: Boolean(body.needsCode),
+            configured: body.configured || {},
+          };
+        }
       }
     } catch {
       /* 프록시 없음 — 직접 호출로 갑니다 */
@@ -61,5 +68,10 @@ export function proxyStatus() {
 
 /** 이 프로바이더를 서버 키로 부를 수 있는지 */
 export function proxyHasKey(provider) {
-  return Boolean(status.proxy && status.configured[provider]);
+  return Boolean(status.proxy && status.enabled && status.configured[provider]);
+}
+
+/** 서버가 접근 코드를 요구하는지 */
+export function proxyNeedsCode() {
+  return Boolean(status.proxy && status.needsCode);
 }

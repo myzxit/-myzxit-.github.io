@@ -213,7 +213,7 @@ async function readStream(res, spec, onDelta) {
  * @returns {Promise<string>} 전체 응답 텍스트
  */
 export async function streamCompletion({
-  provider, useProxy = false, endpoint, apiKey, model, system, turns, signal, onDelta,
+  provider, useProxy = false, accessCode = '', endpoint, apiKey, model, system, turns, signal, onDelta,
 }) {
   const spec = SPECS[provider];
   if (!spec) throw new Error('알 수 없는 AI 프로바이더입니다.');
@@ -222,7 +222,10 @@ export async function streamCompletion({
     ? await requestOrThrow('/api/ai', {
       method: 'POST',
       signal,
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        ...(accessCode ? { 'x-screensolver-code': accessCode } : {}),
+      },
       body: JSON.stringify({ provider, model, system, turns }),
     })
     : await requestOrThrow(spec.directUrl({ endpoint, model }), {
