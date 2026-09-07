@@ -361,11 +361,13 @@ function persistSettingsFromForm() {
 
 /* ── 답변 렌더링 ───────────────────────────────── */
 function renderAnswer(text, streaming) {
-  const { question, answer, body } = splitFinalAnswer(text);
+  const { question, answer, filled, body } = splitFinalAnswer(text);
   // 어떤 문제를 읽었는지 먼저 보여 줘야 엉뚱한 문제를 푼 것을 바로 알 수 있습니다.
+  // 빈칸 문제는 채운 문장까지 보여 줘야 맞는지 바로 확인됩니다.
   const head =
     (question ? `<div class="read-question"><span class="label">읽은 문제</span>${escapeText(question)}</div>` : '') +
-    (answer ? `<div class="final-answer"><span class="label">정답</span>${escapeText(answer)}</div>` : '');
+    (answer ? `<div class="final-answer"><span class="label">정답</span>${escapeText(answer)}</div>` : '') +
+    (filled ? `<div class="filled-in"><span class="label">빈칸을 채우면</span>${escapeText(filled)}</div>` : '');
   el.answer.innerHTML = head + renderMarkdown(body) + (streaming ? '<span class="caret"></span>' : '');
   el.answerScroll.scrollTop = el.answerScroll.scrollHeight;
 }

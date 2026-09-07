@@ -102,12 +102,13 @@ function takeLabelled(src, pattern) {
 }
 
 /**
- * 답변 머리의 `문제: …` / `정답: …` 줄을 찾아 강조 영역으로 분리합니다.
- * 어떤 문제를 읽었는지 사용자가 한눈에 확인할 수 있게 하기 위한 것입니다.
- * @returns {{question: string|null, answer: string|null, body: string}}
+ * 답변 머리의 `문제: …` / `정답: …` / `완성: …` 줄을 찾아 강조 영역으로 분리합니다.
+ * 어떤 문제를 읽었는지, 빈칸을 채운 결과가 무엇인지 한눈에 확인하기 위한 것입니다.
+ * @returns {{question: string|null, answer: string|null, filled: string|null, body: string}}
  */
 export function splitFinalAnswer(src) {
   const q = takeLabelled(src, /^\s*(?:\*\*)?(?:문제|Question|QUESTION)(?:\*\*)?\s*[:：]\s*(.+)$/m);
   const a = takeLabelled(q.rest, /^\s*(?:\*\*)?(?:정답|답|Answer|ANSWER)(?:\*\*)?\s*[:：]\s*(.+)$/m);
-  return { question: q.value, answer: a.value, body: a.rest };
+  const f = takeLabelled(a.rest, /^\s*(?:\*\*)?(?:완성|완성된 문장|Completed)(?:\*\*)?\s*[:：]\s*(.+)$/m);
+  return { question: q.value, answer: a.value, filled: f.value, body: f.rest };
 }
