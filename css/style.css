@@ -139,7 +139,20 @@ body[data-mode="screen"] #preview,
 body[data-mode="camera"] #preview { display: block; }
 body[data-mode="photo"] #still { display: block; }
 body:not([data-mode="idle"]) .stage-empty { display: none; }
-.stage-empty { text-align: center; padding: 24px; max-width: 420px; }
+/* 입력 전에는 안내 문구 길이에 맞춰 늘어나게 (고정 비율에 잘리지 않도록) */
+body[data-mode="idle"] .stage {
+  aspect-ratio: auto;
+  max-height: none;
+  min-height: 240px;
+  height: auto;
+}
+
+.stage-empty { text-align: center; padding: 24px; max-width: 440px; }
+.stage-empty .howto {
+  text-align: left; margin: 10px auto; padding-left: 1.3em;
+  max-width: 340px; font-size: 13px; line-height: 1.7;
+}
+.stage-empty .howto strong { color: var(--text); }
 .stage-empty-icon { font-size: 40px; margin: 0 0 6px; }
 
 /* 입력 소스 탭 */

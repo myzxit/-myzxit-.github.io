@@ -10,6 +10,8 @@
 <title>ScreenSolver — 화면·카메라 실시간 풀이</title>
 <meta name="description" content="PC에서는 화면 공유로, 폰에서는 카메라나 사진으로 문제를 비추면 실시간으로 풀이와 정답을 알려주는 웹앱" />
 <link rel="stylesheet" href="css/style.css" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>" />
 </head>
 <body>
@@ -27,6 +29,7 @@
       <span id="provider-name">Claude</span>
       <span id="provider-model" class="mono"></span>
     </button>
+    <button id="btn-install" class="btn btn-primary" type="button" hidden>📲<span class="btn-label">앱 설치</span></button>
     <span id="status" class="status status-idle">대기 중</span>
     <button id="btn-settings" class="btn btn-ghost" type="button" aria-label="설정">⚙️<span class="btn-label">설정</span></button>
   </div>

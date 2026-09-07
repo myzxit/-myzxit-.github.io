@@ -3,6 +3,9 @@ import { streamCompletion } from './api.js';
 import { Capture, SCREEN_SUPPORTED, CAMERA_SUPPORTED, diffPercent, splitDataUrl } from './capture.js';
 import { renderMarkdown, splitFinalAnswer } from './markdown.js';
 import { buildSystemPrompt, SOLVE_INSTRUCTION } from './prompt.js';
+import {
+  registerServiceWorker, takeSharedImage, onPastedImage, wireInstallButton,
+} from './share.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -48,6 +51,7 @@ const el = {
   settings: $('settings'),
   settingsForm: $('settings-form'),
   btnSettings: $('btn-settings'),
+  btnInstall: $('btn-install'),
   providerPicker: $('provider-picker'),
   apiKey: $('api-key'),
   keyLabel: $('key-label'),
@@ -98,6 +102,32 @@ const SOURCES = {
     live: false,
   },
 };
+
+/*
+ * 폰에서의 "화면 공유".
+ * 모바일 브라우저는 자기 화면을 캡처할 수 없습니다(getDisplayMedia 미지원 — 젬의
+ * 화면 공유는 네이티브 앱 권한입니다). 대신 스크린샷을 앱으로 공유하면 바로
+ * 풀이하도록 안내합니다. 홈 화면에 설치해 두면 공유 메뉴에 앱이 나타납니다.
+ */
+const SCREEN_ON_MOBILE = {
+  start: '스크린샷 불러오기',
+  icon: '📱',
+  title: '스크린샷을 보내면 바로 풀어드립니다',
+  desc: `이 브라우저는 폰 화면을 직접 캡처할 수 없습니다. 대신:
+    <ol class="howto">
+      <li><strong>앱 설치</strong> — 위 <em>📲 앱 설치</em> 또는 브라우저 메뉴 → 홈 화면에 추가</li>
+      <li>문제 화면에서 <strong>스크린샷</strong>을 찍고</li>
+      <li>공유 메뉴에서 <strong>ScreenSolver</strong>를 고르면 자동으로 풀이합니다</li>
+    </ol>
+    아래 버튼으로 스크린샷을 직접 불러올 수도 있습니다.`,
+  live: false,
+};
+
+/** 현재 소스의 표시 정보 (폰의 화면 공유는 대체 안내로 바꿔 줍니다) */
+function sourceInfo(name = state.source) {
+  if (name === 'screen' && !SCREEN_SUPPORTED) return SCREEN_ON_MOBILE;
+  return SOURCES[name];
+}
 
 let settings = loadSettings();
 const capture = new Capture(el.preview, el.still, el.work, el.thumb);
@@ -153,7 +183,7 @@ function setSource(name, { silent = false } = {}) {
     tab.setAttribute('aria-selected', String(on));
   }
 
-  const s = SOURCES[name];
+  const s = sourceInfo(name);
   el.btnStart.textContent = s.start;
   el.btnStop.textContent = s.stop || '중지';
   el.btnStop.hidden = !s.live;
@@ -565,7 +595,8 @@ function markCropBadge(on) {
 /* ── 캡처 시작/중지 ────────────────────────────── */
 async function startCapture() {
   try {
-    if (state.source === 'photo') {
+    // 사진 모드, 그리고 화면 공유가 불가능한 폰에서는 파일 선택으로 갑니다.
+    if (state.source === 'photo' || (state.source === 'screen' && !SCREEN_SUPPORTED)) {
       el.filePhoto.click();
       return;
     }
@@ -635,17 +666,22 @@ el.btnFlip.addEventListener('click', async () => {
   }
 });
 
-el.filePhoto.addEventListener('change', async () => {
-  const file = el.filePhoto.files?.[0];
-  el.filePhoto.value = ''; // 같은 사진을 다시 골라도 change 가 발생하도록
+/** 사진·스크린샷 한 장을 불러와 즉시 풀이합니다. (파일 선택 / 공유 / 붙여넣기 공통) */
+async function loadPhoto(file) {
   if (!file) return;
   try {
     await capture.setPhoto(file);
     onCaptureReady();
-    solve(); // 사진은 고른 즉시 풀이합니다
+    solve();
   } catch (err) {
     showError(err.message);
   }
+}
+
+el.filePhoto.addEventListener('change', () => {
+  const file = el.filePhoto.files?.[0];
+  el.filePhoto.value = ''; // 같은 사진을 다시 골라도 change 가 발생하도록
+  loadPhoto(file);
 });
 
 capture.onEnded = () => stopCapture();
@@ -762,27 +798,35 @@ function init() {
   syncProviderBadge();
   drawHistory();
 
-  // 지원하지 않는 소스는 탭에서 비활성화합니다.
+  // 화면 공유 탭은 폰에서도 남겨 두고(스크린샷 공유 안내로 바뀝니다),
+  // 카메라만 지원 여부에 따라 비활성화합니다.
   const screenTab = el.sourceTabs.querySelector('[data-source="screen"]');
   const cameraTab = el.sourceTabs.querySelector('[data-source="camera"]');
   if (!SCREEN_SUPPORTED) {
-    screenTab.disabled = true;
-    screenTab.title = '이 브라우저(주로 모바일)는 화면 공유를 지원하지 않습니다.';
+    screenTab.title = '이 브라우저는 화면을 직접 캡처할 수 없어, 스크린샷을 공유하는 방법을 안내합니다.';
   }
   if (!CAMERA_SUPPORTED) {
     cameraTab.disabled = true;
     cameraTab.title = '이 브라우저는 카메라를 지원하지 않습니다.';
   }
 
-  // 저장된 소스 → 지원되는 기본값 순으로 결정합니다.
-  const supported = (s) =>
-    (s === 'screen' && SCREEN_SUPPORTED) || (s === 'camera' && CAMERA_SUPPORTED) || s === 'photo';
-  const fallback = SCREEN_SUPPORTED ? 'screen' : CAMERA_SUPPORTED ? 'camera' : 'photo';
-  setSource(supported(settings.source) ? settings.source : fallback, { silent: true });
+  // 사용자가 고른 소스가 있으면 그대로, 없으면 기기에 맞는 소스를 자동 선택합니다.
+  // (폰은 바로 쓸 수 있는 카메라 — 화면 공유 탭은 스크린샷 안내로 남아 있습니다.)
+  const usable = (s) => SOURCES[s] && (s !== 'camera' || CAMERA_SUPPORTED);
+  const auto = SCREEN_SUPPORTED ? 'screen' : CAMERA_SUPPORTED ? 'camera' : 'photo';
+  setSource(usable(settings.source) ? settings.source : auto, { silent: true });
 
-  if (!SCREEN_SUPPORTED && !CAMERA_SUPPORTED) {
-    showError('이 브라우저는 화면 공유와 카메라를 모두 지원하지 않습니다. 사진 모드만 사용할 수 있습니다.');
-  }
+  // 공유·붙여넣기·설치
+  registerServiceWorker();
+  wireInstallButton(el.btnInstall);
+  onPastedImage((file) => {
+    setSource(state.source === 'camera' ? 'photo' : state.source, { silent: true });
+    loadPhoto(file);
+  });
+  takeSharedImage().then((file) => {
+    if (file) loadPhoto(file);   // 공유 메뉴로 들어온 스크린샷은 곧바로 풉니다
+  });
+
   idleStatus();
 }
 
