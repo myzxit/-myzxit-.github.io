@@ -91,14 +91,23 @@ export function renderMarkdown(src) {
   return out.join('\n');
 }
 
+/** 라벨이 붙은 첫 줄(`정답: …`)을 본문에서 떼어냅니다. */
+function takeLabelled(src, pattern) {
+  const m = (src || '').match(pattern);
+  if (!m) return { value: null, rest: src };
+  return {
+    value: m[1].replace(/\*\*/g, '').trim(),
+    rest: (src.slice(0, m.index) + src.slice(m.index + m[0].length)).replace(/^\s*\n/, ''),
+  };
+}
+
 /**
- * "정답: ..." 형태의 첫 줄을 찾아 강조 박스로 분리합니다.
- * @returns {{answer: string|null, body: string}}
+ * 답변 머리의 `문제: …` / `정답: …` 줄을 찾아 강조 영역으로 분리합니다.
+ * 어떤 문제를 읽었는지 사용자가 한눈에 확인할 수 있게 하기 위한 것입니다.
+ * @returns {{question: string|null, answer: string|null, body: string}}
  */
 export function splitFinalAnswer(src) {
-  const m = (src || '').match(/^\s*(?:\*\*)?(?:정답|답|Answer|ANSWER)(?:\*\*)?\s*[:：]\s*(.+)$/m);
-  if (!m) return { answer: null, body: src };
-  const answer = m[1].replace(/\*\*/g, '').trim();
-  const body = src.slice(0, m.index) + src.slice(m.index + m[0].length);
-  return { answer, body: body.replace(/^\s*\n/, '') };
+  const q = takeLabelled(src, /^\s*(?:\*\*)?(?:문제|Question|QUESTION)(?:\*\*)?\s*[:：]\s*(.+)$/m);
+  const a = takeLabelled(q.rest, /^\s*(?:\*\*)?(?:정답|답|Answer|ANSWER)(?:\*\*)?\s*[:：]\s*(.+)$/m);
+  return { question: q.value, answer: a.value, body: a.rest };
 }

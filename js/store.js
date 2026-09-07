@@ -51,7 +51,9 @@ export const DEFAULTS = {
   models: { claude: 'claude-sonnet-5', openai: 'gpt-5', gemini: 'gemini-2.5-flash' },
   endpoints: { claude: '', openai: '', gemini: '' }, // 비우면 기본 엔드포인트 사용
   source: '',       // 사용자가 고른 입력 소스. 비어 있으면 기기에 맞춰 자동 선택합니다.
-  interval: 1500,   // 프레임 확인 주기(ms)
+  interval: 800,    // 프레임 확인 주기(ms) — 짧을수록 반응이 빠릅니다
+  stableMs: 500,    // 화면이 이만큼 멎으면 "멈췄다"고 봅니다
+  cooldown: 3000,   // 자동 분석 사이 최소 간격(ms) — API 비용 보호
   sensitivity: 6,   // 1~20, 클수록 둔감
   lang: 'ko',
   detail: 'brief',
@@ -71,6 +73,8 @@ export function loadSettings() {
     const raw = localStorage.getItem(KEY);
     if (!raw) return cloneDefaults();
     const saved = JSON.parse(raw);
+    // 예전 기본값(1500ms)을 그대로 쓰던 설치본은 더 빠른 새 기본값으로 옮깁니다.
+    if (saved.interval === 1500) delete saved.interval;
     return {
       ...DEFAULTS,
       ...saved,

@@ -70,6 +70,10 @@ const el = {
   intervalLabel: $('interval-label'),
   sensitivity: $('sensitivity'),
   sensLabel: $('sens-label'),
+  stableMs: $('stable-ms'),
+  stableLabel: $('stable-label'),
+  cooldown: $('cooldown'),
+  cooldownLabel: $('cooldown-label'),
   lang: $('lang'),
   extra: $('extra'),
   maxWidth: $('max-width'),
@@ -183,6 +187,7 @@ const state = {
   lastSolveAt: 0,
   selectThenSolve: false,
   nativeMeter: null,
+  frameTimer: null,
   busy: false,
   controller: null,
   turns: [],
@@ -313,6 +318,8 @@ function openSettings() {
   syncProviderFields();
   el.interval.value = settings.interval;
   el.sensitivity.value = settings.sensitivity;
+  el.stableMs.value = settings.stableMs;
+  el.cooldown.value = settings.cooldown;
   el.lang.value = settings.lang;
   el.extra.value = settings.extra;
   el.maxWidth.value = settings.maxWidth;
@@ -321,7 +328,10 @@ function openSettings() {
 }
 
 function syncRangeLabels() {
-  el.intervalLabel.textContent = `${(el.interval.value / 1000).toFixed(2).replace(/0$/, '')}초`;
+  const sec = (ms) => `${(ms / 1000).toFixed(2).replace(/0$/, '').replace(/\.$/, '')}초`;
+  el.intervalLabel.textContent = sec(el.interval.value);
+  el.stableLabel.textContent = sec(el.stableMs.value);
+  el.cooldownLabel.textContent = sec(el.cooldown.value);
   const s = Number(el.sensitivity.value);
   el.sensLabel.textContent = s <= 3 ? '매우 예민' : s <= 8 ? '보통' : s <= 14 ? '둔감' : '매우 둔감';
   el.widthLabel.textContent = `${el.maxWidth.value}px`;
@@ -335,6 +345,8 @@ function persistSettingsFromForm() {
   settings.endpoints[provider] = el.endpoint.value.trim();
   settings.interval = Number(el.interval.value);
   settings.sensitivity = Number(el.sensitivity.value);
+  settings.stableMs = Number(el.stableMs.value);
+  settings.cooldown = Number(el.cooldown.value);
   settings.lang = el.lang.value;
   settings.extra = el.extra.value;
   settings.maxWidth = Number(el.maxWidth.value);
@@ -349,10 +361,11 @@ function persistSettingsFromForm() {
 
 /* ── 답변 렌더링 ───────────────────────────────── */
 function renderAnswer(text, streaming) {
-  const { answer, body } = splitFinalAnswer(text);
-  const head = answer
-    ? `<div class="final-answer"><span class="label">정답</span>${escapeText(answer)}</div>`
-    : '';
+  const { question, answer, body } = splitFinalAnswer(text);
+  // 어떤 문제를 읽었는지 먼저 보여 줘야 엉뚱한 문제를 푼 것을 바로 알 수 있습니다.
+  const head =
+    (question ? `<div class="read-question"><span class="label">읽은 문제</span>${escapeText(question)}</div>` : '') +
+    (answer ? `<div class="final-answer"><span class="label">정답</span>${escapeText(answer)}</div>` : '');
   el.answer.innerHTML = head + renderMarkdown(body) + (streaming ? '<span class="caret"></span>' : '');
   el.answerScroll.scrollTop = el.answerScroll.scrollHeight;
 }
@@ -788,14 +801,30 @@ function stopCapture({ keepStatus = false } = {}) {
 /** 웹 설정값을 네이티브 판정기 설정으로 변환합니다. */
 function nativeConfig() {
   return {
+    // 화면을 확인하는 주기. 시그니처 비교만 하므로 짧아도 부담이 적습니다.
     sampleIntervalMs: settings.interval,
     sensitivity: settings.sensitivity,
-    stableMs: Math.max(600, settings.interval),
-    minAnalysisIntervalMs: 5000,      // API 비용 보호 (§40)
+    // 화면이 멎었다고 볼 시간. 확인 주기와 무관하게 짧게 잡아야 반응이 빠릅니다.
+    stableMs: settings.stableMs,
+    minAnalysisIntervalMs: settings.cooldown,
     maxWidth: settings.maxWidth,
     jpegQuality: 80,
     autoAnalyze: el.autoMode.checked,
   };
+}
+
+/**
+ * 수동 캡처 요청 후 화면이 오지 않으면 상태 표시가 계속 남습니다.
+ * 정지된 화면에서는 새 프레임이 생기지 않을 수 있으므로 반드시 시간 제한을 둡니다.
+ */
+function armFrameTimeout() {
+  clearTimeout(state.frameTimer);
+  state.frameTimer = setTimeout(() => {
+    state.frameTimer = null;
+    if (state.busy) return;
+    showError('화면을 받지 못했습니다. 화면 공유가 켜져 있는지 확인하고 다시 눌러 주세요.');
+    idleStatus();
+  }, 4000);
 }
 
 function stopNativeMeter() {
@@ -854,6 +883,8 @@ function wireAndroidBridge() {
   });
 
   androidBridge.on('screen-capture-stopped', () => {
+    clearTimeout(state.frameTimer);
+    state.frameTimer = null;
     stopNativeMeter();
     capture.stop();
     el.still.removeAttribute('src');
@@ -876,6 +907,8 @@ function wireAndroidBridge() {
 
   // 네이티브가 "분석할 가치가 있다"고 판정한 프레임만 여기로 옵니다.
   androidBridge.on('screen-capture-frame', async (detail) => {
+    clearTimeout(state.frameTimer);
+    state.frameTimer = null;
     const dataUrl = androidBridge.takeFrame();
     if (!dataUrl) return;
     try {
@@ -939,6 +972,7 @@ el.btnSolve.addEventListener('click', () => {
   if (nativeSharing()) {
     setStatus('화면 받는 중…', 'busy');
     androidBridge.requestFrame();
+    armFrameTimeout();
   } else {
     solve();
   }
@@ -1042,7 +1076,7 @@ el.settingsForm.addEventListener('submit', (e) => {
   if (e.submitter?.value === 'save') persistSettingsFromForm();
 });
 
-for (const r of [el.interval, el.sensitivity, el.maxWidth]) {
+for (const r of [el.interval, el.sensitivity, el.maxWidth, el.stableMs, el.cooldown]) {
   r.addEventListener('input', syncRangeLabels);
 }
 

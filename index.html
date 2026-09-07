@@ -192,12 +192,23 @@
 
     <div class="field-row">
       <label class="field">
-        <span>확인 주기 <span class="mono" id="interval-label">1.5초</span></span>
-        <input type="range" id="interval" min="500" max="5000" step="250" value="1500" />
+        <span>확인 주기 <span class="mono" id="interval-label">0.8초</span></span>
+        <input type="range" id="interval" min="300" max="5000" step="100" value="800" />
       </label>
       <label class="field">
         <span>변화 민감도 <span class="mono" id="sens-label">보통</span></span>
         <input type="range" id="sensitivity" min="1" max="20" step="1" value="6" />
+      </label>
+    </div>
+
+    <div class="field-row">
+      <label class="field" title="화면이 이만큼 멎으면 분석을 시작합니다. 짧을수록 빠릅니다.">
+        <span>안정화 시간 <span class="mono" id="stable-label">0.5초</span></span>
+        <input type="range" id="stable-ms" min="200" max="2000" step="100" value="500" />
+      </label>
+      <label class="field" title="자동 분석 사이의 최소 간격입니다. 짧을수록 빠르지만 API 호출이 늘어납니다.">
+        <span>최소 분석 간격 <span class="mono" id="cooldown-label">3초</span></span>
+        <input type="range" id="cooldown" min="1000" max="15000" step="500" value="3000" />
       </label>
     </div>
 

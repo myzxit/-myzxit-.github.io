@@ -60,7 +60,19 @@ class ScreenCaptureService : Service() {
         @Volatile var config: CaptureConfig = CaptureConfig()
             private set
 
-        fun requestManualFrame() { manualRequested = true }
+        /**
+         * ⚡ 지금 풀기.
+         *
+         * MediaProjection 은 화면이 바뀔 때만 새 프레임을 만듭니다. 정지된 화면에서
+         * 다음 프레임을 기다리면 영영 오지 않을 수 있으므로, 들고 있던 마지막
+         * 프레임으로 즉시 응답합니다. (아직 한 장도 없으면 다음 프레임을 씁니다.)
+         */
+        fun requestManualFrame() {
+            val service = instance
+            if (service == null) { manualRequested = true; return }
+            val posted = service.handler?.post { service.emitFromCache() } ?: false
+            if (!posted) manualRequested = true
+        }
 
         /** 웹 설정 화면에서 내려온 값을 즉시 반영합니다. */
         fun applyConfig(next: CaptureConfig) {
@@ -87,9 +99,16 @@ class ScreenCaptureService : Service() {
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
     private var thread: HandlerThread? = null
-    private var handler: Handler? = null
+    internal var handler: Handler? = null
+        private set
 
     internal val processor = FrameProcessor(config)
+
+    /**
+     * 마지막으로 받아 둔 화면 한 장.
+     * 수동 캡처를 즉시 처리하기 위한 것으로, 항상 한 장만 유지합니다.
+     */
+    private var lastFrame: Bitmap? = null
     private var widthPx = 0
     private var heightPx = 0
     private var densityDpi = 0
@@ -242,6 +261,8 @@ class ScreenCaptureService : Service() {
             imageReader?.close()
             imageReader = null
             processor.reset()   // 좌표·시그니처 기준이 달라졌으므로 초기화
+            lastFrame?.recycle()
+            lastFrame = null
             createVirtualDisplay()
         }
     }
@@ -257,15 +278,30 @@ class ScreenCaptureService : Service() {
             if (manual) manualRequested = false
 
             val bitmap = image.toBitmap() ?: return
-            try {
-                processor.process(bitmap, now, manual)?.let { CaptureBus.publishFrame(it) }
-            } finally {
-                bitmap.recycle()
-            }
+            processor.process(bitmap, now, manual)?.let { CaptureBus.publishFrame(it) }
+            // 직전 프레임을 버리고 이번 것을 보관합니다(항상 한 장만).
+            lastFrame?.recycle()
+            lastFrame = bitmap
         } catch (e: Exception) {
             Log.w(TAG, "frame drop: ${e.message}")
         } finally {
             image?.close()   // 누수 방지: 반드시 닫습니다
+        }
+    }
+
+    /** 보관 중인 마지막 화면으로 즉시 한 장 내보냅니다. */
+    private fun emitFromCache() {
+        val bitmap = lastFrame
+        if (bitmap == null || bitmap.isRecycled) {
+            manualRequested = true   // 아직 받은 화면이 없으면 다음 프레임을 씁니다
+            return
+        }
+        try {
+            processor.process(bitmap, System.currentTimeMillis(), true)
+                ?.let { CaptureBus.publishFrame(it) }
+        } catch (e: Exception) {
+            Log.w(TAG, "manual emit failed: ${e.message}")
+            manualRequested = true
         }
     }
 
@@ -330,6 +366,8 @@ class ScreenCaptureService : Service() {
         thread?.quitSafely()
         thread = null
         handler = null
+        lastFrame?.recycle()
+        lastFrame = null
         processor.reset()
         CaptureBus.publishState(state, error)
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
