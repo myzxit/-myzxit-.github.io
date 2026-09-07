@@ -62,7 +62,8 @@
       <!-- 영역 지정용 오버레이 -->
       <div class="crop-layer" id="crop-layer" hidden>
         <div class="crop-box" id="crop-box" hidden></div>
-        <p class="crop-hint">분석할 영역을 드래그해서 지정하세요 · <kbd>Esc</kbd> 취소</p>
+        <p class="crop-hint" id="crop-hint">분석할 영역을 드래그해서 지정하세요 · <kbd>Esc</kbd> 취소</p>
+        <button type="button" class="btn btn-accent crop-all" id="btn-solve-all" hidden>화면 전체 풀기</button>
       </div>
     </div>
 
@@ -196,6 +197,11 @@
         <input type="range" id="sensitivity" min="1" max="20" step="1" value="6" />
       </label>
     </div>
+
+    <label class="switch switch-field">
+      <input type="checkbox" id="select-first" checked />
+      <span>스크린샷·사진을 받으면 <strong>문제 영역을 먼저 선택</strong></span>
+    </label>
 
     <label class="field">
       <span>답변 언어</span>

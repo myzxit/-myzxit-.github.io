@@ -51,6 +51,7 @@ export const DEFAULTS = {
   extra: '',
   maxWidth: 1400,
   autoMode: true,
+  selectFirst: true,  // 이미지를 받으면 문제 영역을 먼저 고르게 할지
 };
 
 export function loadSettings() {

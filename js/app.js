@@ -33,6 +33,9 @@ const el = {
   filePhoto: $('file-photo'),
   cropLayer: $('crop-layer'),
   cropBox: $('crop-box'),
+  cropHint: $('crop-hint'),
+  btnSolveAll: $('btn-solve-all'),
+  selectFirst: $('select-first'),
   meter: $('meter'),
   meterLabel: $('meter-label'),
   meterFill: $('meter-fill'),
@@ -140,6 +143,7 @@ const state = {
   stableCount: 0,
   pendingChange: false,
   lastSolveAt: 0,
+  selectThenSolve: false,
   busy: false,
   controller: null,
   turns: [],
@@ -549,9 +553,13 @@ function finishCrop(e) {
   const x2 = Math.max(cropDrag.x, e.clientX);
   const y2 = Math.max(cropDrag.y, e.clientY);
   cropDrag = null;
+  const thenSolve = state.selectThenSolve;
   endCropMode();
 
-  if (x2 - x1 < 12 || y2 - y1 < 12) return; // 실수로 누른 경우
+  if (x2 - x1 < 12 || y2 - y1 < 12) {          // 실수로 누른 경우
+    if (thenSolve) startCropMode(true);        // 선택 모드는 유지합니다
+    return;
+  }
   capture.crop = {
     x: Math.round((x1 - r.left) / r.scale),
     y: Math.round((y1 - r.top) / r.scale),
@@ -562,22 +570,34 @@ function finishCrop(e) {
   state.analyzedSig = null;
   state.lastSig = null;
   markCropBadge(true);
+  if (thenSolve) solve();   // 고른 영역만 바로 풀이합니다
 }
 
 el.cropLayer.addEventListener('pointerup', finishCrop);
 el.cropLayer.addEventListener('pointercancel', () => { cropDrag = null; endCropMode(); });
 
-function startCropMode() {
+/**
+ * 영역 지정 시작.
+ * @param {boolean} thenSolve 영역을 고르면 바로 풀이할지 (스크린샷을 받았을 때)
+ */
+function startCropMode(thenSolve = false) {
   if (!capture.active) return;
+  state.selectThenSolve = thenSolve;
   el.cropLayer.hidden = false;
   el.cropBox.hidden = true;
   el.cropBox.removeAttribute('style');
+  el.btnSolveAll.hidden = !thenSolve;
+  el.cropHint.innerHTML = thenSolve
+    ? '풀고 싶은 <strong>문제 영역을 드래그</strong>하세요'
+    : '분석할 영역을 드래그해서 지정하세요 · <kbd>Esc</kbd> 취소';
 }
 
 function endCropMode() {
   el.cropLayer.hidden = true;
   el.cropBox.hidden = true;
   el.cropBox.removeAttribute('style');
+  el.btnSolveAll.hidden = true;
+  state.selectThenSolve = false;
 }
 
 function markCropBadge(on) {
@@ -672,7 +692,10 @@ async function loadPhoto(file) {
   try {
     await capture.setPhoto(file);
     onCaptureReady();
-    solve();
+    // 스크린샷은 화면 전체라 UI·광고까지 섞여 있으므로, 기본은 문제 영역을
+    // 먼저 고르게 합니다. (설정에서 끄면 곧바로 풉니다.)
+    if (el.selectFirst.checked) startCropMode(true);
+    else solve();
   } catch (err) {
     showError(err.message);
   }
@@ -687,7 +710,22 @@ el.filePhoto.addEventListener('change', () => {
 capture.onEnded = () => stopCapture();
 
 el.btnSolve.addEventListener('click', () => solve());
-el.btnCrop.addEventListener('click', startCropMode);
+el.btnCrop.addEventListener('click', () => startCropMode(false));
+
+el.btnSolveAll.addEventListener('pointerdown', (e) => e.stopPropagation()); // 드래그로 오인하지 않도록
+el.btnSolveAll.addEventListener('click', (e) => {
+  e.stopPropagation();
+  capture.crop = null;
+  markCropBadge(false);
+  el.btnCropClear.hidden = true;
+  endCropMode();
+  solve();
+});
+
+el.selectFirst.addEventListener('change', () => {
+  settings.selectFirst = el.selectFirst.checked;
+  saveSettings(settings);
+});
 el.btnCropClear.addEventListener('click', () => {
   capture.crop = null;
   el.btnCropClear.hidden = true;
@@ -794,6 +832,7 @@ document.addEventListener('visibilitychange', () => {
 function init() {
   el.detail.value = settings.detail;
   el.autoMode.checked = settings.autoMode;
+  el.selectFirst.checked = settings.selectFirst;
   el.apiKey.dataset.provider = settings.provider;
   syncProviderBadge();
   drawHistory();

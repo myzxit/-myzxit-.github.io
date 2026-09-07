@@ -183,6 +183,10 @@ body[data-mode="idle"] .stage {
   background: rgba(0,0,0,.7); padding: 6px 12px; border-radius: 999px;
   font-size: 12.5px; margin: 0; white-space: nowrap;
 }
+.crop-all {
+  position: absolute; left: 50%; bottom: 52px; transform: translateX(-50%);
+  z-index: 2; box-shadow: 0 4px 16px rgba(0,0,0,.5);
+}
 .crop-active-badge {
   position: absolute; top: 10px; left: 10px;
   background: rgba(110,168,254,.18); border: 1px solid var(--accent);
@@ -236,7 +240,9 @@ body[data-mode="idle"] .stage {
 textarea.input { resize: vertical; font-family: inherit; }
 
 .switch { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer; }
-.switch input { accent-color: var(--accent); width: 16px; height: 16px; }
+.switch input { accent-color: var(--accent); width: 16px; height: 16px; flex: 0 0 auto; }
+.switch-field { align-items: flex-start; line-height: 1.45; }
+.switch-field strong { color: var(--text); font-weight: 600; }
 
 /* ── 답변 ───────────────────────────── */
 .answer-scroll { flex: 1; overflow-y: auto; min-height: 220px; }
