@@ -61,10 +61,15 @@ export const DEFAULTS = {
   selectFirst: true,  // 이미지를 받으면 문제 영역을 먼저 고르게 할지
 };
 
+/** structuredClone 이 없는 구형 WebView 에서도 동작하는 깊은 복사 */
+function cloneDefaults() {
+  return JSON.parse(JSON.stringify(DEFAULTS));
+}
+
 export function loadSettings() {
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return structuredClone(DEFAULTS);
+    if (!raw) return cloneDefaults();
     const saved = JSON.parse(raw);
     return {
       ...DEFAULTS,
@@ -74,7 +79,7 @@ export function loadSettings() {
       endpoints: { ...DEFAULTS.endpoints, ...(saved.endpoints || {}) },
     };
   } catch {
-    return structuredClone(DEFAULTS);
+    return cloneDefaults();
   }
 }
 
@@ -89,7 +94,8 @@ export function saveSettings(settings) {
 
 /** 현재 프로바이더 기준으로 실제 사용할 키/모델/엔드포인트를 정리해서 반환 */
 export function activeConfig(s) {
-  const p = s.provider;
+  // 저장값이 손상됐거나 예전 버전이면 기본 프로바이더로 되돌립니다.
+  const p = PROVIDERS[s.provider] ? s.provider : DEFAULTS.provider;
   const meta = PROVIDERS[p];
   return {
     provider: p,

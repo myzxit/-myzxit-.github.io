@@ -125,15 +125,39 @@ export class Capture {
   }
 
   /**
+   * 정지 이미지를 <img> 에 올리고 디코딩이 끝날 때까지 기다립니다.
+   *
+   * 같은 src 를 다시 대입하면 브라우저가 load 이벤트를 발생시키지 않습니다.
+   * 그대로 onload 를 기다리면 영원히 멈추므로(같은 화면에서 '지금 풀기'를
+   * 두 번 누르거나 같은 사진을 다시 고르는 흔한 경우) 반드시 먼저 확인합니다.
+   */
+  async #showStill(dataUrl, label) {
+    const img = this.still;
+    if (img.getAttribute('src') === dataUrl && img.complete && img.naturalWidth > 0) {
+      return; // 이미 같은 이미지가 올라와 있습니다
+    }
+    img.src = dataUrl;
+    try {
+      // decode() 는 이미 디코딩이 끝난 이미지에도 즉시 resolve 합니다.
+      if (img.decode) await img.decode();
+      else {
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = () => reject(new Error(label));
+        });
+      }
+    } catch {
+      throw new Error(label);
+    }
+    if (!img.naturalWidth) throw new Error(label);
+  }
+
+  /**
    * Android 네이티브가 올려 준 프레임 한 장을 소스로 설정합니다.
    * 사진과 같은 정지 이미지지만, 계속 갱신되는 스트림이라 mode 를 구분합니다.
    */
   async setNativeFrame(dataUrl) {
-    await new Promise((resolve, reject) => {
-      this.still.onload = resolve;
-      this.still.onerror = () => reject(new Error('캡처 화면을 표시하지 못했습니다.'));
-      this.still.src = dataUrl;
-    });
+    await this.#showStill(dataUrl, '캡처 화면을 표시하지 못했습니다.');
     this.stopStream();
     this.mode = 'native';
   }
@@ -146,11 +170,7 @@ export class Capture {
       reader.onerror = () => reject(new Error('사진을 읽지 못했습니다.'));
       reader.readAsDataURL(file);
     });
-    await new Promise((resolve, reject) => {
-      this.still.onload = resolve;
-      this.still.onerror = () => reject(new Error('사진을 표시하지 못했습니다.'));
-      this.still.src = dataUrl;
-    });
+    await this.#showStill(dataUrl, '사진을 표시하지 못했습니다.');
     this.stopStream();
     this.mode = 'photo';
     this.crop = null;

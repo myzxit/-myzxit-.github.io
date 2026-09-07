@@ -68,10 +68,14 @@ self.addEventListener('fetch', (event) => {
   // 2) 그 외 GET 은 네트워크 우선, 실패하면 캐시.
   if (request.method !== 'GET' || url.origin !== self.location.origin) return;
 
+  // 큰 배포 산출물(APK 등)은 캐시에 담지 않습니다. 저장 공간을 통째로 잡아먹고
+  // 브라우저가 캐시 전체를 비워버릴 수 있습니다.
+  const cacheable = !url.pathname.includes('/dist/');
+
   event.respondWith((async () => {
     try {
       const fresh = await fetch(request);
-      if (fresh && fresh.ok && fresh.type === 'basic') {
+      if (cacheable && fresh && fresh.ok && fresh.type === 'basic') {
         const cache = await caches.open(CACHE);
         cache.put(request, fresh.clone());
       }

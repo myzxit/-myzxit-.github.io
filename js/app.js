@@ -219,7 +219,9 @@ function syncProviderBadge() {
 /* ── 입력 소스 ─────────────────────────────────── */
 function setSource(name, { silent = false } = {}) {
   if (!SOURCES[name]) return;
-  if (capture.active) stopCapture({ keepStatus: true });
+  // 첫 프레임 전에는 capture.mode 가 'idle' 이지만 네이티브 캡처는 이미 돌고
+  // 있을 수 있습니다. 탭을 바꾸면 반드시 함께 멈춰야 합니다.
+  if (capture.active || nativeSharing()) stopCapture({ keepStatus: true });
   state.source = name;
 
   for (const tab of el.sourceTabs.children) {
@@ -302,7 +304,11 @@ function syncKeyFlags() {
 
 function openSettings() {
   if (el.settings.open) return;
-  el.providerPicker.querySelector(`input[value="${settings.provider}"]`).checked = true;
+  // 저장값이 손상돼도 설정 창은 반드시 열려야 합니다(여기서 고칠 수 있으므로).
+  const picked = el.providerPicker.querySelector(`input[value="${settings.provider}"]`)
+    || el.providerPicker.querySelector('input[name="provider"]');
+  picked.checked = true;
+  settings.provider = picked.value;
   el.apiKey.dataset.provider = settings.provider;
   syncProviderFields();
   el.interval.value = settings.interval;
@@ -412,6 +418,10 @@ async function solve({ followup = null } = {}) {
 
   let acc = '';
   renderAnswer('', true);
+  // 청크마다 마크다운 전체를 다시 그리면 폰에서 눈에 띄게 버벅입니다.
+  // 화면 갱신은 약 10fps 로 제한하고, 마지막 상태는 아래에서 확실히 그립니다.
+  let lastPaint = 0;
+  let paintTimer = null;
 
   try {
     const full = await streamCompletion({
@@ -424,10 +434,23 @@ async function solve({ followup = null } = {}) {
       signal: state.controller.signal,
       onDelta: (chunk) => {
         acc += chunk;
-        renderAnswer(acc, true);
+        const now = Date.now();
+        if (now - lastPaint >= 100) {
+          lastPaint = now;
+          clearTimeout(paintTimer);
+          paintTimer = null;
+          renderAnswer(acc, true);
+        } else if (!paintTimer) {
+          paintTimer = setTimeout(() => {
+            paintTimer = null;
+            lastPaint = Date.now();
+            renderAnswer(acc, true);
+          }, 100);
+        }
       },
     });
 
+    clearTimeout(paintTimer);
     state.turns.push({ role: 'assistant', text: full });
     renderAnswer(full, false);
     idleStatus();
@@ -436,6 +459,7 @@ async function solve({ followup = null } = {}) {
     el.btnCopy.disabled = false;
     el.followup.disabled = false;
   } catch (err) {
+    clearTimeout(paintTimer);
     if (err.name === 'AbortError') {
       renderAnswer(acc + '\n\n_(중단됨)_', false);
       idleStatus();
@@ -500,11 +524,38 @@ function tick() {
 }
 
 /* ── 기록 ──────────────────────────────────────── */
-function addHistory(dataUrl, text) {
-  const item = { id: Date.now(), image: dataUrl, text, at: new Date() };
+
+/**
+ * 목록에 쓸 작은 미리보기를 만듭니다.
+ * 원본(화면 한 장이 수백 KB)을 그대로 <img> 에 올리면 폰에서 메모리를 크게
+ * 먹습니다. 원본은 이어서 질문용으로 배열에만 남기고, 화면에는 축소본을 씁니다.
+ */
+async function makeThumb(dataUrl, width = 240) {
+  try {
+    const img = new Image();
+    img.src = dataUrl;
+    if (img.decode) await img.decode();
+    else await new Promise((resolve) => { img.onload = resolve; img.onerror = resolve; });
+    if (!img.naturalWidth) return dataUrl;
+    const scale = Math.min(1, width / img.naturalWidth);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    const thumb = canvas.toDataURL('image/jpeg', 0.6);
+    return thumb.length < dataUrl.length ? thumb : dataUrl;
+  } catch {
+    return dataUrl;
+  }
+}
+
+async function addHistory(dataUrl, text) {
+  const item = { id: Date.now(), image: dataUrl, thumb: null, text, at: new Date() };
   state.history.unshift(item);
-  state.history = state.history.slice(0, 24);
+  state.history = state.history.slice(0, 12);
   state.activeHistory = item.id;
+  drawHistory();
+  item.thumb = await makeThumb(dataUrl);
   drawHistory();
 }
 
@@ -526,7 +577,7 @@ function drawHistory() {
     btn.className = 'history-item' + (h.id === state.activeHistory ? ' active' : '');
     const { answer } = splitFinalAnswer(h.text);
     btn.innerHTML =
-      `<img alt="캡처 미리보기" src="${h.image}" />` +
+      `<img alt="캡처 미리보기" src="${h.thumb || h.image}" />` +
       `<span class="history-meta"><strong>${escapeText(answer || '풀이')}</strong>` +
       `${h.at.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>`;
     btn.addEventListener('click', () => {
