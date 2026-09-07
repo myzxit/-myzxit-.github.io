@@ -372,6 +372,13 @@ details.field[open] { gap: 12px; }
   .provider-picker { grid-template-columns: 1fr; }
 }
 
+.apk-link {
+  color: var(--accent-2); text-decoration: none; font-weight: 600;
+  border-bottom: 1px solid rgba(126,224,184,.4);
+}
+.apk-link:hover { border-bottom-color: var(--accent-2); }
+.stage-empty .apk-link { display: inline-block; margin-top: 8px; font-size: 13.5px; }
+
 .foot {
   display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
   padding: 10px 20px; border-top: 1px solid var(--line);

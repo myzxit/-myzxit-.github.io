@@ -127,7 +127,8 @@ const SCREEN_ON_MOBILE = {
     </ol>
     아래 버튼으로 스크린샷을 직접 불러올 수도 있습니다.
     <br /><span class="muted small">화면을 켜 둔 채 실시간으로 분석하려면 ScreenSolver
-    Android 앱이 필요합니다 (웹 브라우저는 폰 화면 캡처를 지원하지 않습니다).</span>`,
+    Android 앱이 필요합니다 (웹 브라우저는 폰 화면 캡처를 지원하지 않습니다).</span>
+    <br /><a class="apk-link" href="dist/screensolver-debug.apk" download>📱 Android 앱 (APK) 내려받기</a>`,
   live: false,
 };
 
