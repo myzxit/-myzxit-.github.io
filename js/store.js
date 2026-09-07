@@ -86,6 +86,8 @@ export const DEFAULTS = {
   preferProxy: true,  // 서버에 키가 있으면 그쪽을 우선 사용 (§2B)
   debug: false,       // 디버그 정보 표시 (§60)
   proxyCode: '',      // 서버 접근 코드 (서버가 요구할 때만 사용)
+  mode: 'solve',      // 'solve' | 'translate' — 문제를 풀지, 화면을 번역할지
+  translateTo: 'ko',  // 번역 목표 언어
   customModels: { claude: [], openai: [], gemini: [] },  // 직접 추가한 모델 ID (§4)
 };
 

@@ -112,6 +112,10 @@ const SECTION_LABELS = [
   ['formula', ['공식']],
   ['steps', ['풀이', '단계별 풀이']],
   ['check', ['검산']],
+  // 화면 번역 모드
+  ['translation', ['번역', 'Translation']],
+  ['original', ['원문', 'Original']],
+  ['vocab', ['단어', '핵심 단어', '주요 표현']],
   ['summary', ['요약', '풀이 요약', '풀이과정 요약']],
   ['oneline', ['한줄', '한 줄 정리', '핵심 한 줄']],
   ['easy', ['쉽게', '쉽게 설명하면']],

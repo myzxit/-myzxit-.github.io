@@ -7,7 +7,10 @@ import { probeProxy, proxyStatus, proxyHasKey, proxyNeedsCode } from './proxy.js
 import { loadNotes, addNote, removeNote, clearNotes, hasNote, notesSizeKb } from './wrongnotes.js';
 import { Capture, SCREEN_SUPPORTED, CAMERA_SUPPORTED, diffPercent, splitDataUrl } from './capture.js';
 import { renderMarkdown, splitFinalAnswer, parseSolution } from './markdown.js';
-import { buildSystemPrompt, SOLVE_INSTRUCTION, ACTIONS } from './prompt.js';
+import {
+  buildSystemPrompt, SOLVE_INSTRUCTION, ACTIONS,
+  buildTranslatePrompt, TRANSLATE_INSTRUCTION, TRANSLATE_ACTIONS, TRANSLATE_LANGS,
+} from './prompt.js';
 import { checkArithmetic, verifyEquation, evaluate, pretty } from './calc.js';
 import { saveHistory, loadHistory, clearHistory } from './history.js';
 import {
@@ -57,6 +60,8 @@ const el = {
   subject: $('subject'),
   grade: $('grade'),
   detail: $('detail'),
+  modeTabs: $('mode-tabs'),
+  translateTo: $('translate-to'),
   btnNewSession: $('btn-new-session'),
   btnCopy: $('btn-copy'),
   btnAbort: $('btn-abort'),
@@ -124,6 +129,8 @@ const SOURCES = {
     icon: '🖥️',
     title: '화면 공유가 시작되지 않았습니다',
     desc: '<em>화면 공유 시작</em>을 눌러 문제가 보이는 탭·창·화면을 선택하세요.',
+    translateTitle: '화면 공유가 시작되지 않았습니다',
+    translateDesc: '<em>화면 공유 시작</em>을 눌러 번역할 탭·창·화면을 선택하세요. 화면이 바뀌면 자동으로 번역합니다.',
     meter: '화면 변화',
     live: true,
     stable: 0.8,     // 이보다 작게 움직이면 "멈춤"으로 봅니다
@@ -135,6 +142,8 @@ const SOURCES = {
     icon: '📷',
     title: '카메라가 꺼져 있습니다',
     desc: '문제를 카메라로 비추고 잠깐 멈추면 자동으로 읽어서 풀어드립니다.',
+    translateTitle: '카메라가 꺼져 있습니다',
+    translateDesc: '번역할 글자를 카메라로 비추고 잠깐 멈추면 자동으로 번역합니다.',
     meter: '카메라 움직임',
     live: true,
     stable: 2.5,     // 손떨림·노이즈가 있으므로 여유를 둡니다
@@ -145,6 +154,8 @@ const SOURCES = {
     icon: '🖼️',
     title: '사진이 선택되지 않았습니다',
     desc: '문제를 촬영하거나 갤러리에서 고르면 바로 풀이를 시작합니다.',
+    translateTitle: '사진이 선택되지 않았습니다',
+    translateDesc: '번역할 글자를 촬영하거나 갤러리에서 고르면 바로 번역합니다.',
     live: false,
   },
 };
@@ -183,6 +194,10 @@ const SCREEN_ON_ANDROID_APP = {
   title: '내 화면을 공유해 문제를 풀어드립니다',
   desc: `<em>내 화면 공유</em>를 누르고 Android 권한창에서 허용한 뒤,
     문제가 있는 앱으로 이동하세요. 화면이 바뀌고 멈추면 자동으로 읽어서 풀이합니다.
+    <br /><span class="muted small">공유 중에는 화면 내용이 선택한 AI로 전송될 수 있습니다.</span>`,
+  translateTitle: '내 화면을 실시간으로 번역합니다',
+  translateDesc: `<em>내 화면 공유</em>를 누르고 Android 권한창에서 허용한 뒤,
+    번역할 앱으로 이동하세요. 화면이 바뀌고 멈추면 자동으로 읽어서 번역합니다.
     <br /><span class="muted small">공유 중에는 화면 내용이 선택한 AI로 전송될 수 있습니다.</span>`,
   meter: '화면 변화',
   live: false,     // JS 폴링 없음 — 네이티브가 판정합니다
@@ -268,6 +283,56 @@ function setProgress(step) {
   }
 }
 
+/* ── 동작 모드 — 풀이 / 화면 번역 ───────────────
+ *
+ * 화면 공유를 켜 두면 화면이 바뀔 때마다 자동으로 처리하는데, 번역 모드에서는
+ * 그 자동 처리가 "풀이" 대신 "번역" 이 됩니다. 캡처·변화 감지·안정화·쿨다운은
+ * 그대로 쓰므로 실시간 번역이 됩니다.
+ */
+
+function isTranslateMode() {
+  return settings.mode === 'translate';
+}
+
+/** 이번 요청에 쓸 시스템 프롬프트 */
+function currentSystemPrompt() {
+  if (isTranslateMode()) {
+    return buildTranslatePrompt({ target: settings.translateTo, extra: settings.extra });
+  }
+  return buildSystemPrompt({
+    lang: settings.lang,
+    detail: el.detail.value,
+    extra: settings.extra,
+    subject: settings.subject,
+    grade: settings.grade,
+  });
+}
+
+/** 이번 요청에 쓸 사용자 지시문 */
+function currentInstruction() {
+  return isTranslateMode() ? TRANSLATE_INSTRUCTION : SOLVE_INSTRUCTION;
+}
+
+function applyMode() {
+  const translate = isTranslateMode();
+  document.body.dataset.task = settings.mode;
+
+  for (const b of el.modeTabs.querySelectorAll('[data-mode]')) {
+    b.setAttribute('aria-selected', String(b.dataset.mode === settings.mode));
+  }
+  // 풀이 수준은 번역에 의미가 없고, 번역 언어는 풀이에 의미가 없습니다.
+  el.detail.hidden = translate;
+  el.translateTo.hidden = !translate;
+  el.translateTo.value = settings.translateTo || 'ko';
+
+  el.followup.placeholder = translate
+    ? '이어서 질문하기 (예: 두 번째 줄만 다시 번역해줘)'
+    : '이어서 질문하기 (예: 3번만 다시 설명해줘)';
+
+  buildResultActions();   // 모드에 맞는 버튼으로 다시 만듭니다
+  syncSourceUI();         // "지금 풀기" → "지금 번역" 등
+}
+
 /* ── 보기 방식 탭 (§10) ────────────────────────── */
 /** 'answer' | 'steps' | 'full' */
 let viewMode = 'full';
@@ -319,28 +384,58 @@ function setSource(name, { silent = false } = {}) {
     tab.setAttribute('aria-selected', String(on));
   }
 
-  const s = sourceInfo(name);
-  el.btnStart.textContent = s.start;
-  el.btnStop.textContent = s.stop || '중지';
-  el.btnStop.hidden = !(s.live || s.native);
-  el.btnFlip.hidden = name !== 'camera';
-  el.stageIcon.textContent = s.icon;
-  el.stageTitle.textContent = s.title;
-  el.stageDesc.innerHTML = s.desc;
-  el.meterLabel.textContent = s.meter || '';
-  el.autoNote.textContent = idleNote();
-  el.autoMode.closest('.switch').hidden = !(s.live || s.native);
+  syncSourceUI();
 
   if (!silent) settings.source = name;
   saveSettings(settings);
   syncStageMode();
 }
 
+/**
+ * 입력 소스 화면의 문구·버튼을 지금 상태에 맞춰 다시 씁니다.
+ * 소스를 바꿀 때뿐 아니라 모드(풀이/번역)를 바꿀 때도 부릅니다.
+ */
+function syncSourceUI() {
+  const s = sourceInfo(state.source);
+  const translate = isTranslateMode();
+
+  el.btnStart.textContent = s.start;
+  el.btnStop.textContent = s.stop || '중지';
+  el.btnStop.hidden = !(s.live || s.native);
+  el.btnFlip.hidden = state.source !== 'camera';
+  el.stageIcon.textContent = s.icon;
+
+  // 번역 모드에서는 같은 화면이 "번역" 을 설명해야 합니다.
+  el.stageTitle.textContent = translate && s.translateTitle ? s.translateTitle : s.title;
+  el.stageDesc.innerHTML = translate && s.translateDesc ? s.translateDesc : s.desc;
+
+  el.meterLabel.textContent = s.meter || '';
+  el.autoNote.textContent = idleNote();
+  el.autoMode.closest('.switch').hidden = !(s.live || s.native);
+
+  // "지금 풀기" 는 번역 모드에서 "지금 번역" 이 됩니다. (Enter 힌트는 유지)
+  const kbd = el.btnSolve.querySelector('kbd');
+  el.btnSolve.textContent = translate ? '지금 번역 ' : '지금 풀기 ';
+  if (kbd) el.btnSolve.append(kbd);
+}
+
 function syncStageMode() {
   document.body.dataset.mode = capture.mode;
 }
 
+/** 네이티브 화면 공유 중 안내 — 모드에 따라 달라집니다. */
+function nativeIdleNote() {
+  return isTranslateMode()
+    ? '번역할 앱으로 이동하면 화면이 바뀔 때마다 자동으로 번역합니다.'
+    : '문제 화면으로 이동하면 자동으로 읽어서 풀이합니다.';
+}
+
 function idleNote() {
+  if (isTranslateMode()) {
+    return state.source === 'camera'
+      ? '글자를 비추고 잠깐 멈추면 자동으로 번역합니다.'
+      : '화면이 바뀌고 멈추면 자동으로 번역합니다.';
+  }
   return state.source === 'camera'
     ? '문제를 비추고 잠깐 멈추면 자동으로 분석합니다.'
     : '변화가 감지되고 화면이 멈추면 자동으로 분석합니다.';
@@ -508,14 +603,16 @@ const COPY_BUTTONS = [
   {
     key: 'answer',
     label: '📋 정답만',
+    translateLabel: '📋 번역만',
     what: '정답',
-    pick: (s) => answerText(s),
+    pick: (s) => s.translation || answerText(s),
   },
   {
     key: 'steps',
     label: '📋 풀이과정만',
+    translateLabel: '📋 원문만',
     what: '풀이과정',
-    pick: (s) => solutionSteps(s),
+    pick: (s) => s.original || solutionSteps(s),
   },
   {
     key: 'all',
@@ -524,6 +621,9 @@ const COPY_BUTTONS = [
     // 형식을 따르지 않은 응답도 있으므로, 정리할 게 없으면 원문을 그대로 씁니다.
     pick: (s, raw) => {
       const parts = [
+        s.translation && `[번역]\n${s.translation}`,
+        s.original && `\n[원문]\n${s.original}`,
+        s.vocab && `\n[단어]\n${s.vocab}`,
         s.question && `문제: ${s.question}`,
         s.answer && `정답: ${s.answer}`,
         s.filled && `완성: ${s.filled}`,
@@ -541,7 +641,8 @@ const COPY_BUTTONS = [
  */
 function buildResultActions() {
   el.actions.innerHTML = '';
-  for (const [key, action] of Object.entries(ACTIONS)) {
+  const actions = isTranslateMode() ? TRANSLATE_ACTIONS : ACTIONS;
+  for (const [key, action] of Object.entries(actions)) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'btn action-btn';
@@ -558,20 +659,21 @@ function buildResultActions() {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'btn action-btn copy-btn';
-    btn.textContent = copy.label;
+    const label = (isTranslateMode() && copy.translateLabel) || copy.label;
+    btn.textContent = label;
     btn.dataset.copy = copy.key;
     btn.addEventListener('click', async () => {
       const last = state.turns.filter((t) => t.role === 'assistant').pop();
       if (!last) return;
       const text = copy.pick(parseSolution(last.text).sections, last.text).trim();
       if (!text) {
-        showError(`${copy.what}이(가) 이번 답변에는 없습니다.`);
+        showError(`${label.replace(/^📋\s*/, '')} 내용이 이번 답변에는 없습니다.`);
         return;
       }
       try {
         await navigator.clipboard.writeText(text);
         btn.textContent = '복사됨';
-        setTimeout(() => { btn.textContent = copy.label; }, 1200);
+        setTimeout(() => { btn.textContent = label; }, 1200);
       } catch {
         showError('클립보드에 접근하지 못했습니다.');
       }
@@ -599,8 +701,8 @@ function buildResultActions() {
     }
     const ok = addNote({
       id,
-      question: sections.question || '',
-      answer: sections.answer || '',
+      question: sections.question || sections.original || '',
+      answer: sections.answer || sections.translation || '',
       solution: last.text,
       subject: guessSubject(last.text),
       thumb: item?.thumb || null,
@@ -614,6 +716,9 @@ function buildResultActions() {
 
 /* 결과 화면 구성 (§57, §58) — 접을 수 있는 섹션들 */
 const RESULT_SECTIONS = [
+  // 화면 번역 모드
+  { key: 'original', icon: '📄', title: '원문', open: true },
+  { key: 'vocab', icon: '🔤', title: '단어·표현', open: true },
   { key: 'conditions', icon: '🧩', title: '주어진 조건', open: true },
   { key: 'target', icon: '❓', title: '구해야 하는 것', open: true },
   { key: 'concept', icon: '💡', title: '핵심 개념', open: true },
@@ -724,6 +829,16 @@ function renderAnswer(text, streaming) {
 
   if (has('question')) {
     html += `<div class="read-question"><span class="label">읽은 문제</span>${escapeText(sections.question)}</div>`;
+  }
+  // 번역 모드의 결과는 정답과 같은 자리에 크게 보여 줍니다.
+  if (has('translation')) {
+    const conf = sections.confidence;
+    const badge = conf
+      ? `<span class="confidence ${CONFIDENCE_CLASS[conf] || 'mid'}">확신도 ${escapeText(conf)}</span>`
+      : '';
+    const to = TRANSLATE_LANGS[settings.translateTo] || '한국어';
+    html += `<div class="final-answer translated"><span class="label">🌐 ${escapeText(to)}${badge}</span>`
+      + `${renderMarkdown(sections.translation)}</div>`;
   }
   if (has('answer')) {
     const conf = sections.confidence;
@@ -968,7 +1083,7 @@ async function solve({ followup = null } = {}) {
     }
     state.lastImage = dataUrl;
     // 앞서 푼 문제들(요약) + 지금 문제(이미지)
-    state.turns = [...sessionTurns(), { role: 'user', text: SOLVE_INSTRUCTION, image }];
+    state.turns = [...sessionTurns(), { role: 'user', text: currentInstruction(), image }];
     state.analyzedSig = capture.signature();
     state.lastSolveAt = Date.now();
   }
@@ -1018,13 +1133,7 @@ async function runAnalysis() {
       endpoint: cfg.endpoint,
       apiKey: cfg.apiKey,
       model: cfg.model,
-      system: buildSystemPrompt({
-        lang: settings.lang,
-        detail: el.detail.value,
-        extra: settings.extra,
-        subject: settings.subject,
-        grade: settings.grade,
-      }),
+      system: currentSystemPrompt(),
       turns: state.turns,
       signal: state.controller.signal,
       onDelta: (chunk) => {
@@ -1223,12 +1332,13 @@ function drawHistory() {
     btn.type = 'button';
     btn.className = 'history-item' + (h.id === state.activeHistory ? ' active' : '');
     const { answer } = splitFinalAnswer(h.text);
+    const label = answer || parseSolution(h.text).sections.translation || '풀이';
     const preview = h.thumb || h.image;
     btn.innerHTML =
       (preview
         ? `<img alt="캡처 미리보기" src="${preview}" />`
         : '<span class="history-noimg" aria-hidden="true">📄</span>')
-      + `<span class="history-meta"><strong>${escapeText(answer || '풀이')}</strong>`
+      + `<span class="history-meta"><strong>${escapeText(label.split('\n')[0])}</strong>`
       + `${h.at.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>`;
     btn.addEventListener('click', () => {
       state.activeHistory = h.id;
@@ -1491,7 +1601,7 @@ function startNativeMeter() {
         change_detected: '변화 감지됨 — 화면이 멈추면 분석합니다…',
         waiting_stable: '안정화 중…',
         analyzing: '분석 준비 중…',
-      }[st.state] || '문제 화면으로 이동하면 자동으로 읽어서 풀이합니다.';
+      }[st.state] || nativeIdleNote();
     }
   }, 700);
 }
@@ -1523,7 +1633,7 @@ function wireAndroidBridge() {
     androidBridge.setConfig(nativeConfig());
     startNativeMeter();
     setStatus('🔴 화면 공유 중', 'live');
-    el.autoNote.textContent = '문제 화면으로 이동하면 자동으로 읽어서 풀이합니다.';
+    el.autoNote.textContent = nativeIdleNote();
   });
 
   androidBridge.on('screen-capture-stopped', () => {
@@ -1719,6 +1829,31 @@ el.btnTheme.addEventListener('click', () => {
   settings.theme = next;
   saveSettings(settings);
   applyTheme();
+});
+
+el.modeTabs.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-mode]');
+  if (!btn || btn.dataset.mode === settings.mode) return;
+  settings.mode = btn.dataset.mode;
+  saveSettings(settings);
+  applyMode();
+  // 모드가 바뀌면 이전 대화 문맥은 맞지 않으므로 새로 시작합니다.
+  // 화면 공유는 그대로 두므로, 켜 둔 채 모드만 바꿔도 계속 이어집니다.
+  beginSession();
+  el.answer.innerHTML = isTranslateMode()
+    ? '<div class="placeholder"><p><strong>🌐 화면 번역 모드</strong></p>'
+      + '<p class="muted">화면 공유를 켜 두면 화면이 바뀔 때마다 자동으로 번역합니다. '
+      + '카메라·사진도 같은 방식으로 번역할 수 있습니다.</p></div>'
+    : '<div class="placeholder"><p><strong>🧮 풀이 모드</strong></p>'
+      + '<p class="muted">문제를 비추거나 화면을 공유하면 단계별로 풀어드립니다.</p></div>';
+  idleStatus();
+});
+
+el.translateTo.addEventListener('change', () => {
+  settings.translateTo = el.translateTo.value;
+  saveSettings(settings);
+  // 언어를 바꾸면 이전 번역과 섞이지 않게 문맥을 비웁니다.
+  state.turns = [];
 });
 
 el.viewTabs.addEventListener('click', (e) => {
@@ -1970,6 +2105,7 @@ function init() {
 
   applyTheme();
   applyViewMode();
+  applyMode();
   syncProviderBadge();
   syncSessionBadge();
   syncKeyStorageNote();

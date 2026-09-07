@@ -91,8 +91,18 @@
   <!-- ── 오른쪽: 풀이 ─────────────────────────────── -->
   <section class="panel panel-answer">
     <div class="panel-head">
-      <h2>풀이</h2>
+      <div class="mode-tabs" id="mode-tabs" role="tablist" aria-label="동작 모드">
+        <button type="button" role="tab" data-mode="solve" aria-selected="true">🧮 풀이</button>
+        <button type="button" role="tab" data-mode="translate" aria-selected="false">🌐 번역</button>
+      </div>
       <div class="head-actions">
+        <select id="translate-to" class="select" title="번역할 언어" aria-label="번역할 언어" hidden>
+          <option value="ko">→ 한국어</option>
+          <option value="en">→ English</option>
+          <option value="ja">→ 日本語</option>
+          <option value="zh">→ 中文</option>
+          <option value="es">→ Español</option>
+        </select>
         <select id="detail" class="select" title="풀이 수준">
           <option value="answer">답만</option>
           <option value="brief" selected>핵심 풀이</option>
