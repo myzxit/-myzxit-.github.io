@@ -1,6 +1,6 @@
 import { PROVIDERS, loadSettings, saveSettings, activeConfig } from './store.js';
 import { streamCompletion } from './api.js';
-import { ScreenCapture, diffPercent, splitDataUrl } from './capture.js';
+import { Capture, SCREEN_SUPPORTED, CAMERA_SUPPORTED, diffPercent, splitDataUrl } from './capture.js';
 import { renderMarkdown, splitFinalAnswer } from './markdown.js';
 import { buildSystemPrompt, SOLVE_INSTRUCTION } from './prompt.js';
 
@@ -11,19 +11,27 @@ const el = {
   providerBadge: $('provider-badge'),
   providerName: $('provider-name'),
   providerModel: $('provider-model'),
+  sourceTabs: $('source-tabs'),
   stage: $('stage'),
   preview: $('preview'),
+  still: $('still'),
+  stageIcon: $('stage-icon'),
+  stageTitle: $('stage-title'),
+  stageDesc: $('stage-desc'),
   work: $('work'),
   thumb: $('thumb'),
   autoMode: $('auto-mode'),
-  btnShare: $('btn-share'),
+  btnStart: $('btn-start'),
   btnStop: $('btn-stop'),
+  btnFlip: $('btn-flip'),
   btnSolve: $('btn-solve'),
   btnCrop: $('btn-crop'),
   btnCropClear: $('btn-crop-clear'),
+  filePhoto: $('file-photo'),
   cropLayer: $('crop-layer'),
   cropBox: $('crop-box'),
   meter: $('meter'),
+  meterLabel: $('meter-label'),
   meterFill: $('meter-fill'),
   meterText: $('meter-text'),
   autoNote: $('auto-note'),
@@ -58,18 +66,53 @@ const el = {
   widthLabel: $('width-label'),
 };
 
+/* 입력 소스별 문구와 자동 감지 보정값 */
+const SOURCES = {
+  screen: {
+    start: '화면 공유 시작',
+    stop: '공유 중지',
+    icon: '🖥️',
+    title: '화면 공유가 시작되지 않았습니다',
+    desc: '<em>화면 공유 시작</em>을 눌러 문제가 보이는 탭·창·화면을 선택하세요.',
+    meter: '화면 변화',
+    live: true,
+    stable: 0.8,     // 이보다 작게 움직이면 "멈춤"으로 봅니다
+    changeMult: 1,   // 새 문제로 볼 변화량 배수
+  },
+  camera: {
+    start: '카메라 켜기',
+    stop: '카메라 끄기',
+    icon: '📷',
+    title: '카메라가 꺼져 있습니다',
+    desc: '문제를 카메라로 비추고 잠깐 멈추면 자동으로 읽어서 풀어드립니다.',
+    meter: '카메라 움직임',
+    live: true,
+    stable: 2.5,     // 손떨림·노이즈가 있으므로 여유를 둡니다
+    changeMult: 2.2,
+  },
+  photo: {
+    start: '사진 선택 / 촬영',
+    icon: '🖼️',
+    title: '사진이 선택되지 않았습니다',
+    desc: '문제를 촬영하거나 갤러리에서 고르면 바로 풀이를 시작합니다.',
+    live: false,
+  },
+};
+
 let settings = loadSettings();
-const capture = new ScreenCapture(el.preview, el.work, el.thumb);
+const capture = new Capture(el.preview, el.still, el.work, el.thumb);
 
 const state = {
+  source: 'screen',
   timer: null,
   lastSig: null,        // 직전 확인 프레임
   analyzedSig: null,    // 마지막으로 분석에 사용한 프레임
-  stableCount: 0,       // 변화 후 화면이 멈춘 횟수
+  stableCount: 0,
   pendingChange: false,
+  lastSolveAt: 0,
   busy: false,
   controller: null,
-  turns: [],            // 현재 대화 (이미지 + 후속 질문)
+  turns: [],
   lastImage: null,
   history: [],
   activeHistory: null,
@@ -81,6 +124,14 @@ function setStatus(text, kind = 'idle') {
   el.status.className = `status status-${kind}`;
 }
 
+function idleStatus() {
+  if (!activeConfig(settings).apiKey) return setStatus('API 키 필요', 'error');
+  if (capture.mode === 'screen') return setStatus('공유 중', 'live');
+  if (capture.mode === 'camera') return setStatus('카메라 켜짐', 'live');
+  if (capture.mode === 'photo') return setStatus('사진 준비됨', 'live');
+  setStatus('대기 중', 'idle');
+}
+
 function syncProviderBadge() {
   const cfg = activeConfig(settings);
   el.providerName.textContent = cfg.meta.label.split(' ')[0];
@@ -88,7 +139,45 @@ function syncProviderBadge() {
   el.providerBadge.classList.toggle('badge-warn', !cfg.apiKey);
   el.providerBadge.title = cfg.apiKey
     ? `${cfg.meta.label} · ${cfg.model}`
-    : `${cfg.meta.label} · API 키가 없습니다. 클릭해서 설정하세요.`;
+    : `${cfg.meta.label} · API 키가 없습니다. 눌러서 설정하세요.`;
+}
+
+/* ── 입력 소스 ─────────────────────────────────── */
+function setSource(name, { silent = false } = {}) {
+  if (!SOURCES[name]) return;
+  if (capture.active) stopCapture({ keepStatus: true });
+  state.source = name;
+
+  for (const tab of el.sourceTabs.children) {
+    const on = tab.dataset.source === name;
+    tab.setAttribute('aria-selected', String(on));
+  }
+
+  const s = SOURCES[name];
+  el.btnStart.textContent = s.start;
+  el.btnStop.textContent = s.stop || '중지';
+  el.btnStop.hidden = !s.live;
+  el.btnFlip.hidden = name !== 'camera';
+  el.stageIcon.textContent = s.icon;
+  el.stageTitle.textContent = s.title;
+  el.stageDesc.innerHTML = s.desc;
+  el.meterLabel.textContent = s.meter || '';
+  el.autoNote.textContent = idleNote();
+  el.autoMode.closest('.switch').hidden = !s.live;
+
+  if (!silent) settings.source = name;
+  saveSettings(settings);
+  syncStageMode();
+}
+
+function syncStageMode() {
+  document.body.dataset.mode = capture.mode;
+}
+
+function idleNote() {
+  return state.source === 'camera'
+    ? '문제를 비추고 잠깐 멈추면 자동으로 분석합니다.'
+    : '변화가 감지되고 화면이 멈추면 자동으로 분석합니다.';
 }
 
 /* ── 설정 UI ───────────────────────────────────── */
@@ -100,7 +189,6 @@ function fillModelOptions(provider, selected) {
     opt.textContent = m.label;
     el.model.append(opt);
   }
-  // 저장된 모델이 목록에 없으면(직접 입력했던 값 등) 항목을 추가해 유지합니다.
   if (selected && ![...el.model.options].some((o) => o.value === selected)) {
     const opt = document.createElement('option');
     opt.value = selected;
@@ -110,8 +198,12 @@ function fillModelOptions(provider, selected) {
   el.model.value = selected || PROVIDERS[provider].models[0].id;
 }
 
+function currentPickedProvider() {
+  return el.providerPicker.querySelector('input:checked').value;
+}
+
 function syncProviderFields() {
-  const provider = el.providerPicker.querySelector('input:checked').value;
+  const provider = currentPickedProvider();
   const meta = PROVIDERS[provider];
   el.apiKey.value = settings.keys[provider] || '';
   el.apiKey.placeholder = meta.keyPlaceholder;
@@ -126,19 +218,18 @@ function syncProviderFields() {
 function syncKeyFlags() {
   for (const flag of el.settingsForm.querySelectorAll('.key-flag')) {
     const p = flag.dataset.flag;
-    const saved = p === currentPickedProvider() ? el.apiKey.value.trim() : (settings.keys[p] || '').trim();
+    const saved = p === currentPickedProvider()
+      ? el.apiKey.value.trim()
+      : (settings.keys[p] || '').trim();
     flag.textContent = saved ? '키 저장됨' : '키 없음';
     flag.classList.toggle('ok', !!saved);
   }
 }
 
-function currentPickedProvider() {
-  return el.providerPicker.querySelector('input:checked').value;
-}
-
 function openSettings() {
   if (el.settings.open) return;
   el.providerPicker.querySelector(`input[value="${settings.provider}"]`).checked = true;
+  el.apiKey.dataset.provider = settings.provider;
   syncProviderFields();
   el.interval.value = settings.interval;
   el.sensitivity.value = settings.sensitivity;
@@ -172,10 +263,7 @@ function persistSettingsFromForm() {
   }
   syncProviderBadge();
   restartLoop();
-  setStatus(
-    !activeConfig(settings).apiKey ? 'API 키 필요' : capture.active ? '공유 중' : '대기 중',
-    !activeConfig(settings).apiKey ? 'error' : capture.active ? 'live' : 'idle',
-  );
+  idleStatus();
 }
 
 /* ── 답변 렌더링 ───────────────────────────────── */
@@ -202,6 +290,13 @@ function showError(message) {
   el.answerScroll.scrollTop = 0;
 }
 
+/* 모바일에서는 풀이 패널이 화면 아래에 있으므로 결과로 스크롤해 줍니다. */
+function revealAnswer() {
+  if (window.matchMedia('(max-width: 940px)').matches) {
+    document.querySelector('.panel-answer')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+
 /* ── 분석 실행 ─────────────────────────────────── */
 async function solve({ followup = null } = {}) {
   if (state.busy) return;
@@ -216,20 +311,20 @@ async function solve({ followup = null } = {}) {
     return;
   }
 
-  let image = null;
   if (followup) {
     if (!state.turns.length) return;
     state.turns.push({ role: 'user', text: followup });
   } else {
     const dataUrl = capture.grab(settings.maxWidth);
-    image = splitDataUrl(dataUrl);
+    const image = splitDataUrl(dataUrl);
     if (!image) {
-      showError('화면 프레임을 캡처하지 못했습니다. 공유를 다시 시작해 보세요.');
+      showError('프레임을 캡처하지 못했습니다. 입력을 다시 시작해 보세요.');
       return;
     }
     state.lastImage = dataUrl;
     state.turns = [{ role: 'user', text: SOLVE_INSTRUCTION, image }];
     state.analyzedSig = capture.signature();
+    state.lastSolveAt = Date.now();
   }
 
   state.busy = true;
@@ -238,6 +333,7 @@ async function solve({ followup = null } = {}) {
   el.btnAbort.hidden = false;
   el.btnSolve.disabled = true;
   el.btnFollowup.disabled = true;
+  revealAnswer();
 
   let acc = '';
   renderAnswer('', true);
@@ -259,7 +355,7 @@ async function solve({ followup = null } = {}) {
 
     state.turns.push({ role: 'assistant', text: full });
     renderAnswer(full, false);
-    setStatus(capture.active ? '공유 중' : '대기 중', capture.active ? 'live' : 'idle');
+    idleStatus();
     if (!followup) addHistory(state.lastImage, full);
     else updateActiveHistory(full);
     el.btnCopy.disabled = false;
@@ -267,7 +363,7 @@ async function solve({ followup = null } = {}) {
   } catch (err) {
     if (err.name === 'AbortError') {
       renderAnswer(acc + '\n\n_(중단됨)_', false);
-      setStatus(capture.active ? '공유 중' : '대기 중', capture.active ? 'live' : 'idle');
+      idleStatus();
     } else {
       renderAnswer(acc, false);
       showError(err.message || String(err));
@@ -279,17 +375,19 @@ async function solve({ followup = null } = {}) {
     el.btnAbort.hidden = true;
     el.btnSolve.disabled = !capture.active;
     el.btnFollowup.disabled = !state.turns.length;
+    state.lastSolveAt = Date.now();
   }
 }
 
 /* ── 자동 감지 루프 ─────────────────────────────── */
 function restartLoop() {
   clearInterval(state.timer);
-  if (!capture.active) return;
+  if (!capture.isLive) return;
   state.timer = setInterval(tick, settings.interval);
 }
 
 function tick() {
+  const tune = SOURCES[state.source];
   const sig = capture.signature();
   if (!sig) return;
 
@@ -297,19 +395,18 @@ function tick() {
   const sinceAnalyzed = diffPercent(sig, state.analyzedSig);
   state.lastSig = sig;
 
-  const pct = Math.min(100, sinceAnalyzed * 4);
-  el.meterFill.style.width = `${pct}%`;
-  el.meterFill.classList.toggle('over', sinceAnalyzed >= settings.sensitivity);
+  const threshold = settings.sensitivity * tune.changeMult;
+  el.meterFill.style.width = `${Math.min(100, (sinceAnalyzed / threshold) * 100)}%`;
+  el.meterFill.classList.toggle('over', sinceAnalyzed >= threshold);
   el.meterText.textContent = `${sinceAnalyzed.toFixed(1)}%`;
 
   if (!el.autoMode.checked || state.busy) return;
+  if (Date.now() - state.lastSolveAt < 3000) return; // 같은 문제를 연달아 보내지 않도록
 
-  // 이전 분석 대비 충분히 달라졌으면 "새 문제 후보"로 표시
-  if (sinceAnalyzed >= settings.sensitivity) state.pendingChange = true;
+  if (sinceAnalyzed >= threshold) state.pendingChange = true;
 
-  // 후보 상태에서 화면이 두 주기 연속 멈추면(스크롤/타이핑 종료) 분석
   if (state.pendingChange) {
-    if (changed < 0.8) state.stableCount += 1;
+    if (changed < tune.stable) state.stableCount += 1;
     else state.stableCount = 0;
 
     if (state.stableCount >= 2) {
@@ -318,10 +415,12 @@ function tick() {
       el.autoNote.textContent = '새 화면을 감지해 분석했습니다.';
       solve();
     } else {
-      el.autoNote.textContent = '변화 감지됨 — 화면이 멈추면 분석합니다…';
+      el.autoNote.textContent = state.source === 'camera'
+        ? '변화 감지됨 — 카메라를 잠시 고정하세요…'
+        : '변화 감지됨 — 화면이 멈추면 분석합니다…';
     }
   } else {
-    el.autoNote.textContent = '변화가 감지되고 화면이 멈추면 자동으로 분석합니다.';
+    el.autoNote.textContent = idleNote();
   }
 }
 
@@ -367,6 +466,7 @@ function drawHistory() {
       el.followup.disabled = false;
       el.btnFollowup.disabled = false;
       drawHistory();
+      revealAnswer();
     });
     li.append(btn);
     el.history.append(li);
@@ -376,19 +476,21 @@ function drawHistory() {
 /* ── 영역 지정 ─────────────────────────────────── */
 let cropDrag = null;
 
-function videoRectInStage() {
-  // object-fit: contain 이므로 실제 영상이 그려지는 영역을 계산합니다.
-  const box = el.preview.getBoundingClientRect();
-  const vw = el.preview.videoWidth || 16;
-  const vh = el.preview.videoHeight || 9;
-  const scale = Math.min(box.width / vw, box.height / vh);
-  const w = vw * scale;
-  const h = vh * scale;
+/** object-fit: contain 기준으로 실제 콘텐츠가 그려지는 영역 */
+function contentRectInStage() {
+  const src = capture.source();
+  if (!src || !src.w) return null;
+  const box = (capture.mode === 'photo' ? el.still : el.preview).getBoundingClientRect();
+  const scale = Math.min(box.width / src.w, box.height / src.h);
+  const w = src.w * scale;
+  const h = src.h * scale;
   return { left: box.left + (box.width - w) / 2, top: box.top + (box.height - h) / 2, w, h, scale };
 }
 
 el.cropLayer.addEventListener('pointerdown', (e) => {
-  const r = videoRectInStage();
+  const r = contentRectInStage();
+  if (!r) return;
+  e.preventDefault();
   cropDrag = { x: e.clientX, y: e.clientY, r };
   el.cropBox.hidden = false;
   el.cropLayer.setPointerCapture(e.pointerId);
@@ -409,7 +511,7 @@ el.cropLayer.addEventListener('pointermove', (e) => {
   });
 });
 
-el.cropLayer.addEventListener('pointerup', (e) => {
+function finishCrop(e) {
   if (!cropDrag) return;
   const { r } = cropDrag;
   const x1 = Math.min(cropDrag.x, e.clientX);
@@ -419,7 +521,7 @@ el.cropLayer.addEventListener('pointerup', (e) => {
   cropDrag = null;
   endCropMode();
 
-  if (x2 - x1 < 12 || y2 - y1 < 12) return; // 실수로 클릭한 경우
+  if (x2 - x1 < 12 || y2 - y1 < 12) return; // 실수로 누른 경우
   capture.crop = {
     x: Math.round((x1 - r.left) / r.scale),
     y: Math.round((y1 - r.top) / r.scale),
@@ -430,7 +532,10 @@ el.cropLayer.addEventListener('pointerup', (e) => {
   state.analyzedSig = null;
   state.lastSig = null;
   markCropBadge(true);
-});
+}
+
+el.cropLayer.addEventListener('pointerup', finishCrop);
+el.cropLayer.addEventListener('pointercancel', () => { cropDrag = null; endCropMode(); });
 
 function startCropMode() {
   if (!capture.active) return;
@@ -457,45 +562,93 @@ function markCropBadge(on) {
   }
 }
 
-/* ── 이벤트 배선 ───────────────────────────────── */
-el.btnShare.addEventListener('click', async () => {
+/* ── 캡처 시작/중지 ────────────────────────────── */
+async function startCapture() {
   try {
-    await capture.start();
-    document.body.classList.add('sharing');
-    el.btnStop.disabled = false;
-    el.btnSolve.disabled = false;
-    el.btnCrop.disabled = false;
-    el.btnShare.disabled = true;
-    el.meter.hidden = false;
-    setStatus('공유 중', 'live');
-    state.lastSig = capture.signature();
-    state.analyzedSig = null;
-    restartLoop();
-  } catch (err) {
-    if (err.name !== 'NotAllowedError') {
-      showError(`화면 공유를 시작하지 못했습니다: ${err.message}`);
+    if (state.source === 'photo') {
+      el.filePhoto.click();
+      return;
     }
-    setStatus('대기 중', 'idle');
-  }
-});
+    if (state.source === 'screen') await capture.startScreen();
+    else await capture.startCamera();
 
-function stopSharing() {
+    onCaptureReady();
+  } catch (err) {
+    if (err.name === 'NotAllowedError') {
+      showError(state.source === 'camera'
+        ? '카메라 사용이 거부되었습니다. 브라우저 주소창의 권한 설정에서 카메라를 허용해 주세요.'
+        : '화면 공유가 취소되었습니다.');
+    } else {
+      showError(`입력을 시작하지 못했습니다: ${err.message}`);
+    }
+    idleStatus();
+  }
+}
+
+function onCaptureReady() {
+  syncStageMode();
+  el.btnStop.disabled = false;
+  el.btnSolve.disabled = false;
+  el.btnCrop.disabled = false;
+  el.btnStart.hidden = capture.isLive; // 켜져 있는 동안에는 자리를 비웁니다
+  el.meter.hidden = !capture.isLive;
+  state.lastSig = capture.signature();
+  state.analyzedSig = null;
+  state.pendingChange = false;
+  state.stableCount = 0;
+  state.lastSolveAt = 0;
+  idleStatus();
+  restartLoop();
+}
+
+function stopCapture({ keepStatus = false } = {}) {
   capture.stop();
   clearInterval(state.timer);
-  document.body.classList.remove('sharing');
+  el.still.removeAttribute('src');
+  syncStageMode();
   el.btnStop.disabled = true;
   el.btnSolve.disabled = true;
   el.btnCrop.disabled = true;
-  el.btnShare.disabled = false;
+  el.btnStart.hidden = false;
   el.btnCropClear.hidden = true;
   el.meter.hidden = true;
   markCropBadge(false);
   endCropMode();
-  setStatus('대기 중', 'idle');
+  if (!keepStatus) idleStatus();
 }
 
-el.btnStop.addEventListener('click', stopSharing);
-capture.onEnded = stopSharing;
+/* ── 이벤트 배선 ───────────────────────────────── */
+el.sourceTabs.addEventListener('click', (e) => {
+  const tab = e.target.closest('[data-source]');
+  if (!tab || tab.disabled) return;
+  setSource(tab.dataset.source);
+});
+
+el.btnStart.addEventListener('click', startCapture);
+el.btnStop.addEventListener('click', () => stopCapture());
+el.btnFlip.addEventListener('click', async () => {
+  try {
+    await capture.flipCamera();
+    onCaptureReady();
+  } catch (err) {
+    showError(`카메라를 전환하지 못했습니다: ${err.message}`);
+  }
+});
+
+el.filePhoto.addEventListener('change', async () => {
+  const file = el.filePhoto.files?.[0];
+  el.filePhoto.value = ''; // 같은 사진을 다시 골라도 change 가 발생하도록
+  if (!file) return;
+  try {
+    await capture.setPhoto(file);
+    onCaptureReady();
+    solve(); // 사진은 고른 즉시 풀이합니다
+  } catch (err) {
+    showError(err.message);
+  }
+});
+
+capture.onEnded = () => stopCapture();
 
 el.btnSolve.addEventListener('click', () => solve());
 el.btnCrop.addEventListener('click', startCropMode);
@@ -525,6 +678,7 @@ el.followupForm.addEventListener('submit', (e) => {
   const q = el.followup.value.trim();
   if (!q) return;
   el.followup.value = '';
+  el.followup.blur(); // 모바일 키보드를 닫아 답변이 가려지지 않게
   solve({ followup: q });
 });
 
@@ -594,6 +748,12 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// 백그라운드로 갔을 때 카메라·감지 루프가 계속 도는 것을 막습니다.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) clearInterval(state.timer);
+  else restartLoop();
+});
+
 /* ── 초기화 ────────────────────────────────────── */
 function init() {
   el.detail.value = settings.detail;
@@ -602,13 +762,28 @@ function init() {
   syncProviderBadge();
   drawHistory();
 
-  if (!navigator.mediaDevices?.getDisplayMedia) {
-    el.btnShare.disabled = true;
-    showError('이 브라우저는 화면 공유(getDisplayMedia)를 지원하지 않습니다. 데스크톱 Chrome, Edge, Firefox, Safari를 사용하세요.');
+  // 지원하지 않는 소스는 탭에서 비활성화합니다.
+  const screenTab = el.sourceTabs.querySelector('[data-source="screen"]');
+  const cameraTab = el.sourceTabs.querySelector('[data-source="camera"]');
+  if (!SCREEN_SUPPORTED) {
+    screenTab.disabled = true;
+    screenTab.title = '이 브라우저(주로 모바일)는 화면 공유를 지원하지 않습니다.';
   }
-  if (!activeConfig(settings).apiKey) {
-    setStatus('API 키 필요', 'error');
+  if (!CAMERA_SUPPORTED) {
+    cameraTab.disabled = true;
+    cameraTab.title = '이 브라우저는 카메라를 지원하지 않습니다.';
   }
+
+  // 저장된 소스 → 지원되는 기본값 순으로 결정합니다.
+  const supported = (s) =>
+    (s === 'screen' && SCREEN_SUPPORTED) || (s === 'camera' && CAMERA_SUPPORTED) || s === 'photo';
+  const fallback = SCREEN_SUPPORTED ? 'screen' : CAMERA_SUPPORTED ? 'camera' : 'photo';
+  setSource(supported(settings.source) ? settings.source : fallback, { silent: true });
+
+  if (!SCREEN_SUPPORTED && !CAMERA_SUPPORTED) {
+    showError('이 브라우저는 화면 공유와 카메라를 모두 지원하지 않습니다. 사진 모드만 사용할 수 있습니다.');
+  }
+  idleStatus();
 }
 
 init();

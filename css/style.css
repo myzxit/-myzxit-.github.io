@@ -134,13 +134,30 @@ kbd {
   justify-content: center;
   overflow: hidden;
 }
-#preview { width: 100%; height: 100%; object-fit: contain; display: none; }
-body.sharing #preview { display: block; }
-body.sharing .stage-empty { display: none; }
+#preview, #still { width: 100%; height: 100%; object-fit: contain; display: none; }
+body[data-mode="screen"] #preview,
+body[data-mode="camera"] #preview { display: block; }
+body[data-mode="photo"] #still { display: block; }
+body:not([data-mode="idle"]) .stage-empty { display: none; }
 .stage-empty { text-align: center; padding: 24px; max-width: 420px; }
 .stage-empty-icon { font-size: 40px; margin: 0 0 6px; }
 
-.crop-layer { position: absolute; inset: 0; cursor: crosshair; background: rgba(5,7,10,.35); }
+/* 입력 소스 탭 */
+.source-tabs { display: flex; gap: 4px; background: var(--bg-soft); border-radius: 10px; padding: 3px; }
+.source-tabs button {
+  font: inherit; font-size: 13px;
+  border: 0; background: none; color: var(--muted);
+  padding: 6px 11px; border-radius: 8px; cursor: pointer; white-space: nowrap;
+}
+.source-tabs button:hover:not(:disabled) { color: var(--text); }
+.source-tabs button[aria-selected="true"] { background: var(--panel); color: var(--text); box-shadow: 0 1px 0 rgba(0,0,0,.35); }
+.source-tabs button:disabled { opacity: .35; cursor: not-allowed; }
+
+.crop-layer {
+  position: absolute; inset: 0; cursor: crosshair;
+  background: rgba(5,7,10,.35);
+  touch-action: none; /* 드래그로 영역을 지정할 때 화면이 스크롤되지 않게 */
+}
 .crop-box {
   position: absolute;
   border: 2px solid var(--accent);
@@ -347,5 +364,74 @@ details.field[open] { gap: 12px; }
   .panel-capture { grid-column: 1; grid-row: 1; }
   .panel-answer  { grid-column: 1; grid-row: 2; }
   .panel-history { grid-column: 1; grid-row: 3; }
-  .answer-scroll { max-height: 55vh; }
+  .answer-scroll { max-height: none; min-height: 180px; }
+  .panel-answer { min-height: 320px; }
+}
+
+/* ── 모바일(폰) ──────────────────────── */
+@media (max-width: 640px) {
+  body {
+    font-size: 15px;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+             env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+
+  .topbar { padding: 10px 12px; gap: 8px; }
+  .brand p { display: none; }
+  .brand h1 { font-size: 16px; }
+  .logo { font-size: 22px; }
+  .topbar-actions { gap: 6px; margin-left: auto; }
+  .badge .mono { display: none; }        /* 좁은 화면에서는 프로바이더 이름만 */
+  #btn-settings { padding: 9px 11px; }
+  .btn-label { display: none; }          /* 아이콘만 남깁니다 */
+
+  .layout { padding: 10px; gap: 10px; }
+  .panel-head { padding: 9px 10px; }
+  .source-tabs { flex: 1; }
+  .source-tabs button { flex: 1; padding: 9px 6px; font-size: 12.5px; }
+
+  .stage { max-height: 40vh; }
+  .stage-empty { padding: 16px; font-size: 13.5px; }
+  .stage-empty-icon { font-size: 32px; }
+
+  /* 손가락으로 누르기 좋은 크기 + 한 줄에 두 개씩 */
+  .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 10px; }
+  .controls .btn { justify-content: center; padding: 12px 10px; font-size: 14px; }
+  #btn-solve { grid-column: 1 / -1; font-size: 15px; font-weight: 600; }
+  .only-desktop { display: none; }
+
+  .answer { padding: 14px; }
+  .answer-scroll { min-height: 140px; }
+  .final-answer { font-size: 18px; }
+
+  .followup { padding: 10px; }
+  .followup .input { font-size: 16px; }  /* iOS 자동 확대 방지 */
+
+  .panel-history { max-height: 200px; }
+  .history-item { width: 96px; }
+  .history { flex-wrap: nowrap; overflow-x: auto; }  /* 옆으로 넘겨 보기 */
+  .history li { flex: 0 0 auto; }
+
+  .foot { padding: 10px 12px; font-size: 11.5px; flex-direction: column; gap: 4px; }
+
+  /* 설정은 아래에서 올라오는 시트로 */
+  .dialog {
+    width: 100vw; max-width: 100vw;
+    max-height: 92vh;
+    margin: auto auto 0;
+    border-radius: 16px 16px 0 0;
+    border-bottom: 0;
+  }
+  .dialog-body { padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); }
+  .dialog .input, .dialog .select { font-size: 16px; padding: 11px 12px; }
+  .dialog .btn { padding: 11px 16px; }
+  .field input[type="range"] { height: 28px; }
+  .dialog-actions { position: sticky; bottom: 0; background: var(--panel); padding-top: 10px; }
+}
+
+/* 마우스가 없는 기기에서는 hover 잔상이 남지 않도록 */
+@media (hover: none) {
+  .btn:hover:not(:disabled) { background: var(--panel-2); }
+  .btn-primary:hover:not(:disabled) { background: #2b4d86; }
+  .btn-accent:hover:not(:disabled) { background: #1f5f47; }
 }

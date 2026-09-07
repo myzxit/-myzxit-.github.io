@@ -43,6 +43,7 @@ export const DEFAULTS = {
   keys: { claude: '', openai: '', gemini: '' },
   models: { claude: 'claude-sonnet-5', openai: 'gpt-5', gemini: 'gemini-2.5-pro' },
   endpoints: { claude: '', openai: '', gemini: '' }, // 비우면 기본 엔드포인트 사용
+  source: 'screen', // 'screen' | 'camera' | 'photo'
   interval: 1500,   // 프레임 확인 주기(ms)
   sensitivity: 6,   // 1~20, 클수록 둔감
   lang: 'ko',
