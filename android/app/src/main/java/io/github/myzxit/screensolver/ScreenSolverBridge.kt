@@ -118,6 +118,23 @@ class ScreenSolverBridge(
         return frame.jpegBase64
     }
 
+    /* ── 보안 저장소 (API 키) ────────────────────────
+     * 웹은 API 키를 localStorage 에 평문으로 둘 수밖에 없지만, 앱에서는
+     * Android Keystore 로 암호화해서 보관합니다. 값은 로그로 남기지 않습니다.
+     */
+
+    @JavascriptInterface
+    fun secureAvailable(): Boolean = SecureStore.isAvailable(activity)
+
+    @JavascriptInterface
+    fun secureGet(name: String): String? = SecureStore.get(activity, name)
+
+    @JavascriptInterface
+    fun secureSet(name: String, value: String): Boolean = SecureStore.put(activity, name, value)
+
+    @JavascriptInterface
+    fun secureDelete(name: String): Boolean = SecureStore.delete(activity, name)
+
     /** 웹 설정 화면의 값을 네이티브 판정기에 반영합니다. */
     @JavascriptInterface
     fun setConfig(json: String) {

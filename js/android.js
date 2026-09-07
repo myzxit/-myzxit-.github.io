@@ -7,7 +7,7 @@
 // 네이티브 계약: android/app/.../ScreenSolverBridge.kt
 
 /** 웹과 네이티브가 맞춰야 하는 브리지 계약 버전 */
-export const BRIDGE_VERSION = 1;
+export const BRIDGE_VERSION = 2;
 
 const native = typeof window !== 'undefined' ? window.ScreenSolverAndroidNative : undefined;
 
@@ -66,6 +66,25 @@ export const androidBridge = {
   /** 웹 설정값을 네이티브 판정기에 반영합니다. */
   setConfig(config) {
     try { native?.setConfig(JSON.stringify(config)); } catch { /* 무시 */ }
+  },
+
+  /**
+   * API 키 보관소. 앱에서는 Android Keystore 로 암호화해 저장합니다.
+   * 웹 브라우저에는 이런 저장소가 없으므로 available() 가 false 입니다.
+   */
+  secure: {
+    available() {
+      try { return native?.secureAvailable?.() === true; } catch { return false; }
+    },
+    get(name) {
+      try { return native?.secureGet?.(name) || ''; } catch { return ''; }
+    },
+    set(name, value) {
+      try { return native?.secureSet?.(name, value) === true; } catch { return false; }
+    },
+    remove(name) {
+      try { return native?.secureDelete?.(name) === true; } catch { return false; }
+    },
   },
 
   /** 네이티브 이벤트 구독. 반환값을 호출하면 해제됩니다. */

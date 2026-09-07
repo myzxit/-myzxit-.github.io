@@ -1,7 +1,23 @@
 // 설정 저장/불러오기 (localStorage)
 // API 키는 프로바이더별로 따로 보관해서, 프로바이더를 바꿔도 기존 키가 남아 있습니다.
+//
+// API 키만은 일반 설정과 다르게 다룹니다.
+//   Android 앱  → Android Keystore 로 암호화해 보관 (설정 JSON 에는 남기지 않음)
+//   웹 브라우저 → localStorage 평문 (브라우저에는 더 나은 저장소가 없습니다)
+// 앱에서 처음 실행하면 예전에 평문으로 저장돼 있던 키를 암호화 저장소로 옮기고
+// 평문 쪽은 지웁니다.
+
+import { androidBridge } from './android.js';
 
 const KEY = 'screensolver.settings.v2';
+
+/** 암호화 저장소에서 쓰는 이름 (프로바이더별) */
+const SECRET_NAME = { claude: 'apikey.claude', openai: 'apikey.openai', gemini: 'apikey.gemini' };
+
+/** 이 기기에서 API 키를 암호화해 보관할 수 있는지 */
+export function secureKeysAvailable() {
+  return androidBridge.secure.available();
+}
 
 export const PROVIDERS = {
   claude: {
@@ -71,26 +87,58 @@ function cloneDefaults() {
 }
 
 export function loadSettings() {
+  let settings;
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return cloneDefaults();
-    const saved = JSON.parse(raw);
-    // 예전 기본값(1500ms)을 그대로 쓰던 설치본은 더 빠른 새 기본값으로 옮깁니다.
-    if (saved.interval === 1500) delete saved.interval;
-    return {
-      ...DEFAULTS,
-      ...saved,
-      keys: { ...DEFAULTS.keys, ...(saved.keys || {}) },
-      models: { ...DEFAULTS.models, ...(saved.models || {}) },
-      endpoints: { ...DEFAULTS.endpoints, ...(saved.endpoints || {}) },
-    };
+    if (!raw) {
+      settings = cloneDefaults();
+    } else {
+      const saved = JSON.parse(raw);
+      // 예전 기본값(1500ms)을 그대로 쓰던 설치본은 더 빠른 새 기본값으로 옮깁니다.
+      if (saved.interval === 1500) delete saved.interval;
+      settings = {
+        ...DEFAULTS,
+        ...saved,
+        keys: { ...DEFAULTS.keys, ...(saved.keys || {}) },
+        models: { ...DEFAULTS.models, ...(saved.models || {}) },
+        endpoints: { ...DEFAULTS.endpoints, ...(saved.endpoints || {}) },
+      };
+    }
   } catch {
-    return cloneDefaults();
+    settings = cloneDefaults();
   }
+
+  if (secureKeysAvailable()) {
+    let migrated = false;
+    for (const [provider, name] of Object.entries(SECRET_NAME)) {
+      const plain = (settings.keys[provider] || '').trim();
+      if (plain) {
+        // 예전 버전이 평문으로 남긴 키 → 암호화 저장소로 옮깁니다.
+        androidBridge.secure.set(name, plain);
+        migrated = true;
+      } else {
+        settings.keys[provider] = androidBridge.secure.get(name) || '';
+      }
+    }
+    // 평문이 남아 있었다면 즉시 지웁니다.
+    if (migrated) saveSettings(settings);
+  }
+  return settings;
 }
 
 export function saveSettings(settings) {
   try {
+    if (secureKeysAvailable()) {
+      // 키는 암호화 저장소에만 두고, 설정 JSON 에는 절대 남기지 않습니다.
+      const stripped = { ...settings, keys: { ...DEFAULTS.keys } };
+      for (const [provider, name] of Object.entries(SECRET_NAME)) {
+        const value = (settings.keys[provider] || '').trim();
+        if (value) androidBridge.secure.set(name, value);
+        else androidBridge.secure.remove(name);
+      }
+      localStorage.setItem(KEY, JSON.stringify(stripped));
+      return true;
+    }
     localStorage.setItem(KEY, JSON.stringify(settings));
     return true;
   } catch {

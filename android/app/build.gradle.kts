@@ -15,7 +15,7 @@ android {
         versionName = "1.0.0"
 
         // 웹 UI 와 네이티브 브리지의 계약 버전 (js/android.js 와 일치해야 합니다)
-        buildConfigField("int", "BRIDGE_VERSION", "1")
+        buildConfigField("int", "BRIDGE_VERSION", "2")
     }
 
     buildTypes {

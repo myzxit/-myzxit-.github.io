@@ -1,9 +1,10 @@
-import { PROVIDERS, loadSettings, saveSettings, activeConfig } from './store.js';
+import { PROVIDERS, loadSettings, saveSettings, activeConfig, secureKeysAvailable } from './store.js';
 import { streamCompletion } from './api.js';
 import { Capture, SCREEN_SUPPORTED, CAMERA_SUPPORTED, diffPercent, splitDataUrl } from './capture.js';
 import { renderMarkdown, splitFinalAnswer, parseSolution } from './markdown.js';
 import { buildSystemPrompt, SOLVE_INSTRUCTION, ACTIONS } from './prompt.js';
 import { checkArithmetic, verifyEquation, evaluate, pretty } from './calc.js';
+import { saveHistory, loadHistory, clearHistory } from './history.js';
 import {
   registerServiceWorker, takeSharedImage, onPastedImage, wireInstallButton,
 } from './share.js';
@@ -67,6 +68,7 @@ const el = {
   apiKey: $('api-key'),
   keyLabel: $('key-label'),
   keyLink: $('key-link'),
+  keyStorage: $('key-storage'),
   btnReveal: $('btn-reveal'),
   btnForget: $('btn-forget'),
   model: $('model'),
@@ -303,6 +305,16 @@ function syncProviderFields() {
   el.endpoint.value = settings.endpoints[provider] || '';
   fillModelOptions(provider, settings.models[provider]);
   syncKeyFlags();
+  syncKeyStorageNote();
+}
+
+/** 키가 실제로 어디에 저장되는지 그대로 알려 줍니다. */
+function syncKeyStorageNote() {
+  if (!el.keyStorage) return;
+  el.keyStorage.textContent = secureKeysAvailable()
+    ? '키는 Android Keystore 로 암호화해 이 기기에만 저장됩니다. 프로바이더별로 각각 보관됩니다.'
+    : '키는 이 브라우저(localStorage)에만 저장되고 프로바이더별로 각각 보관됩니다.';
+  el.keyStorage.classList.toggle('ok', secureKeysAvailable());
 }
 
 function syncKeyFlags() {
@@ -610,6 +622,12 @@ function rememberSolved(text) {
   state.session.push({ summary: summarizeSolved(text) });
   if (state.session.length > SESSION_LIMIT) state.session.shift();
   syncSessionBadge();
+  persist();
+}
+
+/** 기록과 세션 기억을 저장합니다. 실패해도 앱 동작에는 영향을 주지 않습니다. */
+function persist() {
+  saveHistory(state.history, state.session);
 }
 
 function syncSessionBadge() {
@@ -630,6 +648,7 @@ function beginSession() {
   state.lastImage = null;
   state.history = [];
   state.activeHistory = null;
+  clearHistory();   // 저장된 것도 함께 지웁니다 — "새로 시작"은 완전히 새로 시작입니다
   el.answer.innerHTML = '<div class="placeholder"><p>새 세션을 시작했습니다. 이전 대화는 기억하지 않습니다.</p></div>';
   el.btnCopy.disabled = true;
   el.actions.hidden = true;
@@ -854,11 +873,13 @@ async function addHistory(dataUrl, text) {
   drawHistory();
   item.thumb = await makeThumb(dataUrl);
   drawHistory();
+  persist();
 }
 
 function updateActiveHistory(text) {
   const item = state.history.find((h) => h.id === state.activeHistory);
   if (item) item.text = text;
+  persist();
 }
 
 function drawHistory() {
@@ -873,15 +894,22 @@ function drawHistory() {
     btn.type = 'button';
     btn.className = 'history-item' + (h.id === state.activeHistory ? ' active' : '');
     const { answer } = splitFinalAnswer(h.text);
+    const preview = h.thumb || h.image;
     btn.innerHTML =
-      `<img alt="캡처 미리보기" src="${h.thumb || h.image}" />` +
-      `<span class="history-meta"><strong>${escapeText(answer || '풀이')}</strong>` +
-      `${h.at.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>`;
+      (preview
+        ? `<img alt="캡처 미리보기" src="${preview}" />`
+        : '<span class="history-noimg" aria-hidden="true">📄</span>')
+      + `<span class="history-meta"><strong>${escapeText(answer || '풀이')}</strong>`
+      + `${h.at.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>`;
     btn.addEventListener('click', () => {
       state.activeHistory = h.id;
+      // 지난 실행에서 복원한 항목에는 원본 이미지가 없습니다(저장하지 않습니다).
+      // 이때는 이미지 없이 풀이 내용만으로 이어서 질문할 수 있게 합니다.
       state.turns = [
         ...sessionTurns(),
-        { role: 'user', text: SOLVE_INSTRUCTION, image: splitDataUrl(h.image) },
+        h.image
+          ? { role: 'user', text: SOLVE_INSTRUCTION, image: splitDataUrl(h.image) }
+          : { role: 'user', text: '(앞서 푼 문제입니다. 아래 풀이를 참고해 이어서 답해 주세요.)' },
         { role: 'assistant', text: h.text },
       ];
       state.lastImage = h.image;
@@ -1333,6 +1361,7 @@ el.btnClearHistory.addEventListener('click', () => {
   state.history = [];
   state.activeHistory = null;
   drawHistory();
+  persist();
 });
 
 el.btnSettings.addEventListener('click', openSettings);
@@ -1407,8 +1436,15 @@ function init() {
   el.autoMode.checked = settings.autoMode;
   el.selectFirst.checked = settings.selectFirst;
   el.apiKey.dataset.provider = settings.provider;
+
+  // 지난 실행에서 푼 문제들을 복원합니다. '새로 시작'을 누르기 전까지 이어집니다.
+  const restored = loadHistory();
+  state.history = restored.history;
+  state.session = restored.session;
+
   syncProviderBadge();
   syncSessionBadge();
+  syncKeyStorageNote();
   buildResultActions();
   drawHistory();
 
