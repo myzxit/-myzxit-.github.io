@@ -99,7 +99,7 @@ export function renderMarkdown(src) {
  */
 // 한 줄짜리 블록. 다음 줄부터는 이 블록에 이어 붙이지 않습니다.
 // (형식을 따르지 않는 응답에서 `정답:` 이 본문 전체를 삼키는 것을 막습니다)
-const SINGLE_LINE = new Set(['question', 'answer', 'filled', 'verify', 'confidence']);
+const SINGLE_LINE = new Set(['question', 'answer', 'filled', 'verify', 'confidence', 'oneline']);
 
 const SECTION_LABELS = [
   ['question', ['문제', 'Question']],
@@ -112,6 +112,8 @@ const SECTION_LABELS = [
   ['formula', ['공식']],
   ['steps', ['풀이', '단계별 풀이']],
   ['check', ['검산']],
+  ['summary', ['요약', '풀이 요약', '풀이과정 요약']],
+  ['oneline', ['한줄', '한 줄 정리', '핵심 한 줄']],
   ['easy', ['쉽게', '쉽게 설명하면']],
   ['caution', ['주의', '실수하기 쉬운 부분']],
   ['choices', ['선택지', '선택지 분석']],

@@ -385,6 +385,39 @@ function persistSettingsFromForm() {
 }
 
 /* ── 답변 렌더링 ───────────────────────────────── */
+
+/** 결과 복사 버튼. 필요한 부분만 골라 복사할 수 있게 나눠 둡니다. */
+const COPY_BUTTONS = [
+  {
+    key: 'answer',
+    label: '📋 정답만',
+    what: '정답',
+    pick: (s) => answerText(s),
+  },
+  {
+    key: 'steps',
+    label: '📋 풀이과정만',
+    what: '풀이과정',
+    pick: (s) => solutionSteps(s),
+  },
+  {
+    key: 'all',
+    label: '📋 전체',
+    what: '답변',
+    // 형식을 따르지 않은 응답도 있으므로, 정리할 게 없으면 원문을 그대로 씁니다.
+    pick: (s, raw) => {
+      const parts = [
+        s.question && `문제: ${s.question}`,
+        s.answer && `정답: ${s.answer}`,
+        s.filled && `완성: ${s.filled}`,
+        solutionSteps(s) && `\n[풀이과정]\n${solutionSteps(s)}`,
+        s.check && `\n[검산]\n${s.check}`,
+        s.oneline && `\n한 줄 정리: ${s.oneline}`,
+      ].filter(Boolean);
+      return parts.length ? parts.join('\n') : raw;
+    },
+  },
+];
 /**
  * 결과 아래 액션 버튼을 만듭니다 (§25, §27, §59, §61, §62).
  * 모두 실제 후속 요청을 보내며, 현재 문제와 풀이 문맥을 그대로 유지합니다.
@@ -403,23 +436,31 @@ function buildResultActions() {
     });
     el.actions.append(btn);
   }
-  const copyAnswer = document.createElement('button');
-  copyAnswer.type = 'button';
-  copyAnswer.className = 'btn action-btn';
-  copyAnswer.textContent = '📋 정답만 복사';
-  copyAnswer.addEventListener('click', async () => {
-    const last = state.turns.filter((t) => t.role === 'assistant').pop();
-    const answer = last ? parseSolution(last.text).sections.answer : null;
-    if (!answer) return;
-    try {
-      await navigator.clipboard.writeText(answer);
-      copyAnswer.textContent = '복사됨';
-      setTimeout(() => { copyAnswer.textContent = '📋 정답만 복사'; }, 1200);
-    } catch {
-      showError('클립보드에 접근하지 못했습니다.');
-    }
-  });
-  el.actions.append(copyAnswer);
+  // 복사는 필요한 만큼만 — 정답만 / 풀이과정만 / 전체
+  for (const copy of COPY_BUTTONS) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn action-btn copy-btn';
+    btn.textContent = copy.label;
+    btn.dataset.copy = copy.key;
+    btn.addEventListener('click', async () => {
+      const last = state.turns.filter((t) => t.role === 'assistant').pop();
+      if (!last) return;
+      const text = copy.pick(parseSolution(last.text).sections, last.text).trim();
+      if (!text) {
+        showError(`${copy.what}이(가) 이번 답변에는 없습니다.`);
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(text);
+        btn.textContent = '복사됨';
+        setTimeout(() => { btn.textContent = copy.label; }, 1200);
+      } catch {
+        showError('클립보드에 접근하지 못했습니다.');
+      }
+    });
+    el.actions.append(btn);
+  }
 }
 
 /* 결과 화면 구성 (§57, §58) — 접을 수 있는 섹션들 */
@@ -429,6 +470,7 @@ const RESULT_SECTIONS = [
   { key: 'concept', icon: '💡', title: '핵심 개념', open: true },
   { key: 'formula', icon: '📐', title: '공식', open: true },
   { key: 'steps', icon: '📝', title: '단계별 풀이', open: true },
+  { key: 'summary', icon: '📄', title: '풀이과정 요약', open: true },
   { key: 'check', icon: '🔎', title: '검산', open: true },
   { key: 'easy', icon: '💬', title: '쉽게 설명하면', open: true },
   { key: 'caution', icon: '⚠️', title: '실수하기 쉬운 부분', open: false },
@@ -481,6 +523,50 @@ function sectionHtml({ icon, title, open }, content) {
     + `<div class="sol-body">${renderMarkdown(content)}</div></details>`;
 }
 
+/**
+ * 풀이과정만 뽑아냅니다.
+ * `요약:` 이 있으면 그것을, 없으면 단계별 풀이를 씁니다.
+ */
+function solutionSteps(sections) {
+  return sections.summary || sections.steps || '';
+}
+
+/** 정답 줄 (빈칸 문제면 채운 문장도 함께) */
+function answerText(sections) {
+  return [sections.answer, sections.filled && `완성: ${sections.filled}`]
+    .filter(Boolean).join('\n');
+}
+
+/**
+ * 맨 아래 최종 정리 카드 — 정답 → 풀이과정 → 정답(재확인).
+ * 답이 없으면 만들지 않습니다.
+ */
+function finalCardHtml(sections) {
+  const answer = sections.answer;
+  if (!answer) return '';
+
+  const steps = solutionSteps(sections);
+  const oneline = sections.oneline;
+
+  // 앱이 직접 검산한 결과가 있으면 재확인 줄에 함께 보여 줍니다.
+  const notes = runCalculationCheck(sections);
+  const verdict = notes.length
+    ? (notes.every((n) => n.ok)
+      ? '<span class="recheck ok">✓ 앱 검산 통과</span>'
+      : '<span class="recheck bad">⚠ 앱 검산에서 어긋남</span>')
+    : '';
+
+  return '<section class="final-card">'
+    + '<h3 class="final-card-title">📌 최종 정리</h3>'
+    + '<dl>'
+    + `<dt>정답</dt><dd class="fc-answer">${escapeText(answer)}</dd>`
+    + (sections.filled ? `<dt>빈칸 완성</dt><dd>${escapeText(sections.filled)}</dd>` : '')
+    + (steps ? `<dt>풀이과정</dt><dd class="fc-steps">${renderMarkdown(steps)}</dd>` : '')
+    + (oneline ? `<dt>한 줄 정리</dt><dd>${escapeText(oneline)}</dd>` : '')
+    + `<dt>정답</dt><dd class="fc-answer">${escapeText(answer)}${verdict}</dd>`
+    + '</dl></section>';
+}
+
 function renderAnswer(text, streaming) {
   const { sections, body } = parseSolution(text);
   const has = (k) => sections[k] && sections[k].length;
@@ -515,10 +601,16 @@ function renderAnswer(text, streaming) {
   }
 
   if (body) html += renderMarkdown(body);
+
+  // 맨 아래 최종 정리 — 길게 스크롤한 뒤에도 답을 다시 볼 수 있게 합니다.
+  if (!streaming) html += finalCardHtml(sections);
+
   if (streaming) html += '<span class="caret"></span>';
 
   el.answer.innerHTML = html;
-  el.actions.hidden = streaming || !has('answer');
+  // 형식을 따르지 않은 자유 형식 답변에도 "왜?"·"전체 복사"는 그대로 쓸 수 있어야
+  // 하므로, 내용이 있으면 버튼을 보여 줍니다.
+  el.actions.hidden = streaming || !String(text || '').trim();
   el.answerScroll.scrollTop = streaming ? el.answerScroll.scrollHeight : 0;
 }
 
