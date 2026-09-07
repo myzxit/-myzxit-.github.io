@@ -193,6 +193,8 @@ const state = {
   controller: null,
   turns: [],
   session: [],          // 이번 세션에서 푼 문제들의 요약 (다음 질문의 문맥)
+  pendingFollowup: null,
+  awaitingNetwork: false,
   lastImage: null,
   history: [],
   activeHistory: null,
@@ -205,6 +207,7 @@ function setStatus(text, kind = 'idle') {
 }
 
 function idleStatus() {
+  if (navigator.onLine === false) return setStatus('오프라인', 'error');
   if (!activeConfig(settings).apiKey) return setStatus('API 키 필요', 'error');
   if (capture.mode === 'screen') return setStatus('공유 중', 'live');
   if (capture.mode === 'camera') return setStatus('카메라 켜짐', 'live');
@@ -395,6 +398,51 @@ function revealAnswer() {
   }
 }
 
+/* ── 네트워크 ──────────────────────────────────── */
+//
+// AI 풀이는 인터넷이 반드시 필요합니다(완전 오프라인 풀이는 불가능).
+// 와이파이가 없어도 모바일 데이터로 동작해야 하고, 신호가 끊겼다 돌아오면
+// 사용자가 다시 캡처하지 않고 이어서 풀 수 있어야 합니다.
+
+function isNetworkError(err) {
+  return err?.offline === true
+    || err?.name === 'NetworkError'
+    || /failed to fetch|load failed|networkerror|network request failed/i.test(err?.message || '');
+}
+
+/** 왜 연결이 안 되는지 가능한 만큼 구체적으로 알려 줍니다. */
+async function networkHint() {
+  if (navigator.onLine === false) {
+    return '인터넷에 연결되어 있지 않습니다. 와이파이 또는 모바일 데이터를 켜 주세요.';
+  }
+  const net = IS_ANDROID_APP ? androidBridge.network() : null;
+  if (net?.dataSaver && net?.metered) {
+    return '모바일 데이터에서 이 앱의 백그라운드 데이터가 제한되어 있습니다.\n'
+      + '설정 → 네트워크 → 데이터 절약에서 ScreenSolver 의 데이터 사용을 허용해 주세요.';
+  }
+  if (net && !net.online) {
+    return '네트워크에 연결되어 있지 않습니다. 와이파이나 모바일 데이터를 확인해 주세요.';
+  }
+  return '서버에 연결하지 못했습니다. 신호가 약하거나 잠시 끊긴 것 같습니다.';
+}
+
+/** 연결 문제를 알리고 [다시 시도] 를 제공합니다. 화면 공유는 그대로 둡니다. */
+function showNetworkError(message) {
+  setStatus('오프라인', 'error');
+  const box = document.createElement('div');
+  box.className = 'error-box';
+  box.textContent = message;
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.className = 'btn btn-primary retry-btn';
+  retry.textContent = '다시 시도';
+  retry.addEventListener('click', () => { box.remove(); runAnalysis(); });
+  box.append(retry);
+  el.answer.prepend(box);
+  el.answerScroll.scrollTop = 0;
+  state.awaitingNetwork = true;   // 연결이 돌아오면 자동으로 이어서 시도
+}
+
 /* ── 세션 기억 ─────────────────────────────────── */
 //
 // 화면 공유를 새로 시작하기 전까지는 이번 세션에서 푼 문제를 모두 기억해서,
@@ -488,6 +536,26 @@ async function solve({ followup = null } = {}) {
     state.lastSolveAt = Date.now();
   }
 
+  state.pendingFollowup = followup;
+  await runAnalysis();
+}
+
+/**
+ * 준비된 state.turns 로 실제 요청을 보냅니다.
+ * 네트워크가 끊겼다 돌아왔을 때 그대로 다시 부를 수 있도록 분리했습니다.
+ */
+async function runAnalysis() {
+  if (state.busy) return;
+  const cfg = activeConfig(settings);
+  if (!cfg.apiKey || !state.turns.length) return;
+  const followup = state.pendingFollowup;
+
+  // 연결이 없으면 요청을 아예 보내지 않습니다. 화면 공유는 그대로 둡니다.
+  if (navigator.onLine === false) {
+    showNetworkError('인터넷에 연결되어 있지 않습니다. 와이파이 또는 모바일 데이터를 켜 주세요.');
+    return;
+  }
+
   state.busy = true;
   state.controller = new AbortController();
   setStatus('분석 중…', 'busy');
@@ -531,6 +599,7 @@ async function solve({ followup = null } = {}) {
     });
 
     clearTimeout(paintTimer);
+    state.awaitingNetwork = false;
     state.turns.push({ role: 'assistant', text: full });
     renderAnswer(full, false);
     idleStatus();
@@ -547,6 +616,9 @@ async function solve({ followup = null } = {}) {
     if (err.name === 'AbortError') {
       renderAnswer(acc + '\n\n_(중단됨)_', false);
       idleStatus();
+    } else if (isNetworkError(err)) {
+      renderAnswer(acc, false);
+      showNetworkError(await networkHint());
     } else {
       renderAnswer(acc, false);
       showError(err.message || String(err));
@@ -584,6 +656,7 @@ function tick() {
   el.meterText.textContent = `${sinceAnalyzed.toFixed(1)}%`;
 
   if (!el.autoMode.checked || state.busy) return;
+  if (navigator.onLine === false) return;            // 연결이 없으면 캡처만 하고 보내지 않습니다
   if (Date.now() - state.lastSolveAt < 3000) return; // 같은 문제를 연달아 보내지 않도록
 
   if (sinceAnalyzed >= threshold) state.pendingChange = true;
@@ -1168,6 +1241,18 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     solve();
   }
+});
+
+// 연결이 끊겼다 돌아오면, 실패했던 분석을 자동으로 이어서 시도합니다.
+window.addEventListener('online', () => {
+  if (!state.awaitingNetwork || state.busy) { idleStatus(); return; }
+  state.awaitingNetwork = false;
+  el.answer.querySelectorAll('.error-box').forEach((b) => b.remove());
+  runAnalysis();
+});
+
+window.addEventListener('offline', () => {
+  if (!state.busy) setStatus('오프라인', 'error');
 });
 
 // 백그라운드로 갔을 때 카메라·감지 루프가 계속 도는 것을 막습니다.

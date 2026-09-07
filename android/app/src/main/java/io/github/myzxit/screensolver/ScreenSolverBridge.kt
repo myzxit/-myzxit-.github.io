@@ -1,5 +1,7 @@
 package io.github.myzxit.screensolver
 
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Handler
 import android.os.Looper
 import android.webkit.JavascriptInterface
@@ -62,6 +64,32 @@ class ScreenSolverBridge(
 
     @JavascriptInterface
     fun getStatus(): String = statusJson().toString()
+
+    /**
+     * 네트워크 상태. 와이파이가 아니어도 동작해야 하므로, 실제로 막는 것이
+     * 무엇인지(연결 없음 / 데이터 절약)를 웹이 구분해 안내할 수 있게 합니다.
+     */
+    @JavascriptInterface
+    fun getNetwork(): String {
+        val json = JSONObject()
+        try {
+            val cm = activity.getSystemService(ConnectivityManager::class.java)
+            val caps = cm?.getNetworkCapabilities(cm.activeNetwork)
+            val online = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+            json.put("online", online)
+            json.put("metered", caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) != true)
+            json.put("wifi", caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true)
+            json.put("cellular", caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true)
+            // 데이터 절약이 켜져 있으면 종량제 회선에서 요청이 막힐 수 있습니다.
+            json.put(
+                "dataSaver",
+                cm?.restrictBackgroundStatus == ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED,
+            )
+        } catch (e: Exception) {
+            json.put("error", e.message ?: "unknown")
+        }
+        return json.toString()
+    }
 
     @JavascriptInterface
     fun startScreenCapture() {

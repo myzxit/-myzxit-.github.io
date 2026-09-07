@@ -48,6 +48,15 @@ export const androidBridge = {
     return base64 ? `data:image/jpeg;base64,${base64}` : null;
   },
 
+  /**
+   * { online, metered, wifi, cellular, dataSaver }
+   * 와이파이가 없을 때 무엇이 막고 있는지 구분하기 위한 것입니다.
+   */
+  network() {
+    if (!native?.getNetwork) return null;
+    return parse(native.getNetwork());
+  },
+
   /** { state, running, changePercent, error } */
   status() {
     if (!native) return { running: false, state: 'idle', changePercent: 0 };

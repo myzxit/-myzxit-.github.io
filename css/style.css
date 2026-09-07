@@ -321,6 +321,7 @@ textarea.input { resize: vertical; font-family: inherit; }
   white-space: pre-line;   /* 오류 안내의 줄바꿈을 살립니다 */
 }
 .error-box code { background: #2a1a1a; border-color: #5c2d2d; }
+.retry-btn { display: block; margin-top: 10px; }
 
 .caret {
   display: inline-block; width: 7px; height: 15px; vertical-align: -2px;

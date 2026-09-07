@@ -4,6 +4,24 @@
 //   turns: [{ role: 'user'|'assistant', text: string, image?: { mime, base64 } }]
 // 공통 출력: onDelta(textChunk) 를 반복 호출하고, 전체 텍스트를 resolve.
 
+/**
+ * fetch 를 감싸 네트워크 실패를 구분 가능한 오류로 바꿉니다.
+ * 연결이 없을 때 브라우저는 "Failed to fetch" 같은 문구만 던지는데,
+ * 그대로 보여 주면 원인을 알 수 없고 재시도할 방법도 없습니다.
+ */
+async function requestOrThrow(url, init) {
+  try {
+    return await fetch(url, init);
+  } catch (err) {
+    if (err.name === 'AbortError') throw err;
+    const offline = new Error('네트워크에 연결하지 못했습니다.');
+    offline.name = 'NetworkError';
+    offline.offline = true;
+    offline.cause = err;
+    throw offline;
+  }
+}
+
 /** SSE(text/event-stream) 응답을 줄 단위 data 페이로드로 흘려보냅니다. */
 async function* sseLines(response) {
   const reader = response.body.getReader();
@@ -79,7 +97,7 @@ async function streamClaude({ endpoint, apiKey, model, system, turns, signal, on
     return { role: t.role, content };
   });
 
-  const res = await fetch(endpoint, {
+  const res = await requestOrThrow(endpoint, {
     method: 'POST',
     signal,
     headers: {
@@ -126,7 +144,7 @@ async function streamOpenAI({ endpoint, apiKey, model, system, turns, signal, on
     messages.push({ role: 'user', content });
   }
 
-  const res = await fetch(endpoint, {
+  const res = await requestOrThrow(endpoint, {
     method: 'POST',
     signal,
     headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
@@ -158,7 +176,7 @@ async function streamGemini({ endpoint, apiKey, model, system, turns, signal, on
     return { role: t.role === 'assistant' ? 'model' : 'user', parts };
   });
 
-  const res = await fetch(url, {
+  const res = await requestOrThrow(url, {
     method: 'POST',
     signal,
     headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
