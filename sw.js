@@ -19,6 +19,7 @@ const SHELL = [
   './js/markdown.js',
   './js/prompt.js',
   './js/share.js',
+  './js/android.js',
   './manifest.webmanifest',
   './icons/icon-192.png',
   './icons/icon-512.png',

@@ -137,7 +137,8 @@ kbd {
 #preview, #still { width: 100%; height: 100%; object-fit: contain; display: none; }
 body[data-mode="screen"] #preview,
 body[data-mode="camera"] #preview { display: block; }
-body[data-mode="photo"] #still { display: block; }
+body[data-mode="photo"] #still,
+body[data-mode="native"] #still { display: block; }
 body:not([data-mode="idle"]) .stage-empty { display: none; }
 /* 입력 전에는 안내 문구 길이에 맞춰 늘어나게 (고정 비율에 잘리지 않도록) */
 body[data-mode="idle"] .stage {

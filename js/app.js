@@ -6,6 +6,9 @@ import { buildSystemPrompt, SOLVE_INSTRUCTION } from './prompt.js';
 import {
   registerServiceWorker, takeSharedImage, onPastedImage, wireInstallButton,
 } from './share.js';
+import {
+  IS_ANDROID_APP, androidBridge, bridgeMismatch, exposePublicApi, STATE_LABEL,
+} from './android.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -122,14 +125,41 @@ const SCREEN_ON_MOBILE = {
       <li>문제 화면에서 <strong>스크린샷</strong>을 찍고</li>
       <li>공유 메뉴에서 <strong>ScreenSolver</strong>를 고르면 자동으로 풀이합니다</li>
     </ol>
-    아래 버튼으로 스크린샷을 직접 불러올 수도 있습니다.`,
+    아래 버튼으로 스크린샷을 직접 불러올 수도 있습니다.
+    <br /><span class="muted small">화면을 켜 둔 채 실시간으로 분석하려면 ScreenSolver
+    Android 앱이 필요합니다 (웹 브라우저는 폰 화면 캡처를 지원하지 않습니다).</span>`,
   live: false,
 };
 
-/** 현재 소스의 표시 정보 (폰의 화면 공유는 대체 안내로 바꿔 줍니다) */
+/*
+ * Android 앱 안에서의 화면 공유 — MediaProjection 으로 폰 전체 화면을 캡처합니다.
+ * 웹 브라우저에는 없는 경로이며, 변화 감지·안정화·중복 판정은 네이티브가 합니다.
+ */
+const SCREEN_ON_ANDROID_APP = {
+  start: '📱 내 화면 공유',
+  stop: '공유 중지',
+  icon: '📱',
+  title: '내 화면을 공유해 문제를 풀어드립니다',
+  desc: `<em>내 화면 공유</em>를 누르고 Android 권한창에서 허용한 뒤,
+    문제가 있는 앱으로 이동하세요. 화면이 바뀌고 멈추면 자동으로 읽어서 풀이합니다.
+    <br /><span class="muted small">공유 중에는 화면 내용이 선택한 AI로 전송될 수 있습니다.</span>`,
+  meter: '화면 변화',
+  live: false,     // JS 폴링 없음 — 네이티브가 판정합니다
+  native: true,
+};
+
+/** 현재 소스의 표시 정보 (환경에 따라 화면 공유 화면이 달라집니다) */
 function sourceInfo(name = state.source) {
-  if (name === 'screen' && !SCREEN_SUPPORTED) return SCREEN_ON_MOBILE;
+  if (name === 'screen') {
+    if (IS_ANDROID_APP) return SCREEN_ON_ANDROID_APP;
+    if (!SCREEN_SUPPORTED) return SCREEN_ON_MOBILE;
+  }
   return SOURCES[name];
+}
+
+/** 지금 Android 네이티브 화면 공유를 쓰는 소스인지 */
+function isNativeScreen() {
+  return IS_ANDROID_APP && state.source === 'screen';
 }
 
 let settings = loadSettings();
@@ -144,6 +174,7 @@ const state = {
   pendingChange: false,
   lastSolveAt: 0,
   selectThenSolve: false,
+  nativeMeter: null,
   busy: false,
   controller: null,
   turns: [],
@@ -163,6 +194,7 @@ function idleStatus() {
   if (capture.mode === 'screen') return setStatus('공유 중', 'live');
   if (capture.mode === 'camera') return setStatus('카메라 켜짐', 'live');
   if (capture.mode === 'photo') return setStatus('사진 준비됨', 'live');
+  if (capture.mode === 'native') return setStatus('🔴 화면 공유 중', 'live');
   setStatus('대기 중', 'idle');
 }
 
@@ -190,14 +222,14 @@ function setSource(name, { silent = false } = {}) {
   const s = sourceInfo(name);
   el.btnStart.textContent = s.start;
   el.btnStop.textContent = s.stop || '중지';
-  el.btnStop.hidden = !s.live;
+  el.btnStop.hidden = !(s.live || s.native);
   el.btnFlip.hidden = name !== 'camera';
   el.stageIcon.textContent = s.icon;
   el.stageTitle.textContent = s.title;
   el.stageDesc.innerHTML = s.desc;
   el.meterLabel.textContent = s.meter || '';
   el.autoNote.textContent = idleNote();
-  el.autoMode.closest('.switch').hidden = !s.live;
+  el.autoMode.closest('.switch').hidden = !(s.live || s.native);
 
   if (!silent) settings.source = name;
   saveSettings(settings);
@@ -297,6 +329,7 @@ function persistSettingsFromForm() {
   }
   syncProviderBadge();
   restartLoop();
+  if (IS_ANDROID_APP) androidBridge.setConfig(nativeConfig());
   idleStatus();
 }
 
@@ -514,7 +547,7 @@ let cropDrag = null;
 function contentRectInStage() {
   const src = capture.source();
   if (!src || !src.w) return null;
-  const box = (capture.mode === 'photo' ? el.still : el.preview).getBoundingClientRect();
+  const box = capture.displayEl.getBoundingClientRect();
   const scale = Math.min(box.width / src.w, box.height / src.h);
   const w = src.w * scale;
   const h = src.h * scale;
@@ -583,6 +616,12 @@ el.cropLayer.addEventListener('pointercancel', () => { cropDrag = null; endCropM
 function startCropMode(thenSolve = false) {
   if (!capture.active) return;
   state.selectThenSolve = thenSolve;
+  // 풀이 결과로 스크롤된 뒤라면 캡처 화면이 화면 밖에 있을 수 있습니다.
+  // 드래그할 대상이 보이지 않으면 영역 지정이 불가능하므로 먼저 올려 줍니다.
+  const box = el.stage.getBoundingClientRect();
+  if (box.top < 0 || box.bottom > window.innerHeight) {
+    el.stage.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
   el.cropLayer.hidden = false;
   el.cropBox.hidden = true;
   el.cropBox.removeAttribute('style');
@@ -615,6 +654,12 @@ function markCropBadge(on) {
 /* ── 캡처 시작/중지 ────────────────────────────── */
 async function startCapture() {
   try {
+    // Android 앱: 시스템 권한창 → MediaProjection (네이티브가 캡처를 이어갑니다)
+    if (isNativeScreen()) {
+      androidBridge.setConfig(nativeConfig());
+      androidBridge.start();
+      return;
+    }
     // 사진 모드, 그리고 화면 공유가 불가능한 폰에서는 파일 선택으로 갑니다.
     if (state.source === 'photo' || (state.source === 'screen' && !SCREEN_SUPPORTED)) {
       el.filePhoto.click();
@@ -641,8 +686,10 @@ function onCaptureReady() {
   el.btnStop.disabled = false;
   el.btnSolve.disabled = false;
   el.btnCrop.disabled = false;
-  el.btnStart.hidden = capture.isLive; // 켜져 있는 동안에는 자리를 비웁니다
-  el.meter.hidden = !capture.isLive;
+  el.btnStart.hidden = capture.isStreaming; // 켜져 있는 동안에는 자리를 비웁니다
+  el.btnStop.hidden = !capture.isStreaming;
+  el.btnStop.disabled = !capture.isStreaming;
+  el.meter.hidden = !capture.isStreaming;
   state.lastSig = capture.signature();
   state.analyzedSig = null;
   state.pendingChange = false;
@@ -653,6 +700,10 @@ function onCaptureReady() {
 }
 
 function stopCapture({ keepStatus = false } = {}) {
+  if (capture.mode === 'native' || (isNativeScreen() && androidBridge.status().running)) {
+    androidBridge.stop();
+  }
+  stopNativeMeter();
   capture.stop();
   clearInterval(state.timer);
   el.still.removeAttribute('src');
@@ -666,6 +717,114 @@ function stopCapture({ keepStatus = false } = {}) {
   markCropBadge(false);
   endCropMode();
   if (!keepStatus) idleStatus();
+}
+
+/* ── Android 네이티브 화면 공유 ─────────────────── */
+
+/** 웹 설정값을 네이티브 판정기 설정으로 변환합니다. */
+function nativeConfig() {
+  return {
+    sampleIntervalMs: settings.interval,
+    sensitivity: settings.sensitivity,
+    stableMs: Math.max(600, settings.interval),
+    minAnalysisIntervalMs: 5000,      // API 비용 보호 (§40)
+    maxWidth: settings.maxWidth,
+    jpegQuality: 80,
+    autoAnalyze: el.autoMode.checked,
+  };
+}
+
+function stopNativeMeter() {
+  clearInterval(state.nativeMeter);
+  state.nativeMeter = null;
+}
+
+/** 네이티브 상태(변화량·상태머신)를 미터에 반영합니다. */
+function startNativeMeter() {
+  stopNativeMeter();
+  state.nativeMeter = setInterval(() => {
+    const st = androidBridge.status();
+    if (!st.running) return;
+    const threshold = settings.sensitivity;
+    el.meterFill.style.width = `${Math.min(100, (st.changePercent / threshold) * 100)}%`;
+    el.meterFill.classList.toggle('over', st.changePercent >= threshold);
+    el.meterText.textContent = `${(st.changePercent || 0).toFixed(1)}%`;
+    if (!state.busy) {
+      el.autoNote.textContent = {
+        change_detected: '변화 감지됨 — 화면이 멈추면 분석합니다…',
+        waiting_stable: '안정화 중…',
+        analyzing: '분석 준비 중…',
+      }[st.state] || '문제 화면으로 이동하면 자동으로 읽어서 풀이합니다.';
+    }
+  }, 700);
+}
+
+function wireAndroidBridge() {
+  if (!IS_ANDROID_APP) return;
+
+  const mismatch = bridgeMismatch();
+  if (mismatch !== null) {
+    showError(`앱과 웹 화면의 버전이 다릅니다 (앱 브리지 v${mismatch}). 앱을 최신 버전으로 업데이트해 주세요.`);
+  }
+
+  exposePublicApi({
+    // Android 뒤로가기: 웹이 먼저 처리할 게 있으면 true
+    onBack: () => {
+      if (el.settings.open) { el.settings.close(); return true; }
+      if (!el.cropLayer.hidden) { endCropMode(); return true; }
+      return false;
+    },
+  });
+
+  androidBridge.on('screen-capture-started', () => {
+    el.btnStart.hidden = true;
+    el.btnStop.hidden = false;
+    el.btnStop.disabled = false;
+    el.btnSolve.disabled = false;
+    el.btnCrop.disabled = false;
+    el.meter.hidden = false;
+    androidBridge.setConfig(nativeConfig());
+    startNativeMeter();
+    setStatus('🔴 화면 공유 중', 'live');
+    el.autoNote.textContent = '문제 화면으로 이동하면 자동으로 읽어서 풀이합니다.';
+  });
+
+  androidBridge.on('screen-capture-stopped', () => {
+    stopNativeMeter();
+    capture.stop();
+    el.still.removeAttribute('src');
+    syncStageMode();
+    el.btnStart.hidden = false;
+    el.btnStop.disabled = true;
+    el.btnSolve.disabled = true;
+    el.btnCrop.disabled = true;
+    el.meter.hidden = true;
+    markCropBadge(false);
+    endCropMode();
+    idleStatus();
+  });
+
+  androidBridge.on('screen-capture-error', (detail) => {
+    stopNativeMeter();
+    if (detail.error) showError(detail.error);
+    setStatus('오류', 'error');
+  });
+
+  // 네이티브가 "분석할 가치가 있다"고 판정한 프레임만 여기로 옵니다.
+  androidBridge.on('screen-capture-frame', async (detail) => {
+    const dataUrl = androidBridge.takeFrame();
+    if (!dataUrl) return;
+    try {
+      await capture.setNativeFrame(dataUrl);
+      syncStageMode();
+      el.btnSolve.disabled = false;
+      el.btnCrop.disabled = false;
+      // 자동 프레임은 바로 풀이합니다. 수동(⚡ 지금 풀기)도 마찬가지입니다.
+      if (detail.reason === 'manual' || el.autoMode.checked) solve();
+    } catch (err) {
+      showError(err.message);
+    }
+  });
 }
 
 /* ── 이벤트 배선 ───────────────────────────────── */
@@ -709,7 +868,11 @@ el.filePhoto.addEventListener('change', () => {
 
 capture.onEnded = () => stopCapture();
 
-el.btnSolve.addEventListener('click', () => solve());
+el.btnSolve.addEventListener('click', () => {
+  // 네이티브 공유 중에는 "지금 화면"을 새로 받아서 풀이합니다.
+  if (capture.mode === 'native') androidBridge.requestFrame();
+  else solve();
+});
 el.btnCrop.addEventListener('click', () => startCropMode(false));
 
 el.btnSolveAll.addEventListener('pointerdown', (e) => e.stopPropagation()); // 드래그로 오인하지 않도록
@@ -766,6 +929,7 @@ el.autoMode.addEventListener('change', () => {
   saveSettings(settings);
   state.pendingChange = false;
   state.stableCount = 0;
+  if (IS_ANDROID_APP) androidBridge.setConfig(nativeConfig());
 });
 
 el.btnClearHistory.addEventListener('click', () => {
@@ -854,6 +1018,8 @@ function init() {
   const usable = (s) => SOURCES[s] && (s !== 'camera' || CAMERA_SUPPORTED);
   const auto = SCREEN_SUPPORTED ? 'screen' : CAMERA_SUPPORTED ? 'camera' : 'photo';
   setSource(usable(settings.source) ? settings.source : auto, { silent: true });
+
+  wireAndroidBridge();
 
   // 공유·붙여넣기·설치
   registerServiceWorker();

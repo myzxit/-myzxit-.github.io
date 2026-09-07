@@ -20,7 +20,7 @@ export class Capture {
     this.workCtx = work.getContext('2d', { willReadFrequently: true });
     this.thumbCtx = thumb.getContext('2d', { willReadFrequently: true });
     this.stream = null;
-    this.mode = 'idle';    // 'idle' | 'screen' | 'camera' | 'photo'
+    this.mode = 'idle';    // 'idle' | 'screen' | 'camera' | 'photo' | 'native'
     this.facing = 'environment';
     this.crop = null;      // {x, y, w, h} — 원본 픽셀 기준
     this.onEnded = () => {};
@@ -30,14 +30,28 @@ export class Capture {
     return this.mode !== 'idle';
   }
 
-  /** 움직이는 영상 소스인지 (자동 감지 루프는 이때만 의미가 있습니다) */
+  /**
+   * JS 쪽 자동 감지 루프를 돌려야 하는 소스인지.
+   * 'native'(Android 화면 공유)는 네이티브가 이미 변화 감지를 끝내고
+   * 필요한 프레임만 올려 주므로 JS 루프를 돌리지 않습니다.
+   */
   get isLive() {
     return this.mode === 'screen' || this.mode === 'camera';
   }
 
+  /** 캡처가 계속 들어오는 소스인지 (UI 의 '중지' 버튼 노출 기준) */
+  get isStreaming() {
+    return this.isLive || this.mode === 'native';
+  }
+
+  /** 화면에 실제로 보이는 요소 (영역 지정 좌표 계산용) */
+  get displayEl() {
+    return this.isLive ? this.video : this.still;
+  }
+
   /** 현재 그릴 원본 요소와 크기 */
   source() {
-    if (this.mode === 'photo') {
+    if (this.mode === 'photo' || this.mode === 'native') {
       return { el: this.still, w: this.still.naturalWidth, h: this.still.naturalHeight };
     }
     if (this.isLive) {
@@ -108,6 +122,20 @@ export class Capture {
   async flipCamera() {
     if (this.mode !== 'camera') return;
     await this.startCamera(this.facing === 'environment' ? 'user' : 'environment');
+  }
+
+  /**
+   * Android 네이티브가 올려 준 프레임 한 장을 소스로 설정합니다.
+   * 사진과 같은 정지 이미지지만, 계속 갱신되는 스트림이라 mode 를 구분합니다.
+   */
+  async setNativeFrame(dataUrl) {
+    await new Promise((resolve, reject) => {
+      this.still.onload = resolve;
+      this.still.onerror = () => reject(new Error('캡처 화면을 표시하지 못했습니다.'));
+      this.still.src = dataUrl;
+    });
+    this.stopStream();
+    this.mode = 'native';
   }
 
   /** 사진(파일/촬영) 한 장을 소스로 설정합니다. */
