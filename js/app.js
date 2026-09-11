@@ -177,7 +177,18 @@ const SCREEN_ON_MOBILE = {
       <li>공유 메뉴에서 <strong>ScreenSolver</strong>를 고르면 자동으로 풀이합니다</li>
     </ol>
     아래 버튼으로 스크린샷을 직접 불러올 수도 있습니다.
-    <br /><span class="muted small">화면을 켜 둔 채 실시간으로 분석하려면 ScreenSolver
+    <br /><span class="muted small">화면을 켜 둔 채 <strong>실시간</strong>으로 분석하려면 ScreenSolver
+    Android 앱이 필요합니다 (웹 브라우저는 폰 화면 캡처를 지원하지 않습니다).</span>
+    <br /><a class="apk-link" href="dist/screensolver-debug.apk" download>📱 Android 앱 (APK) 내려받기</a>`,
+  translateTitle: '스크린샷을 보내면 바로 번역합니다',
+  translateDesc: `이 브라우저는 폰 화면을 직접 캡처할 수 없습니다. 대신:
+    <ol class="howto">
+      <li><strong>앱 설치</strong> — 위 <em>📲 앱 설치</em> 또는 브라우저 메뉴 → 홈 화면에 추가</li>
+      <li>번역할 화면에서 <strong>스크린샷</strong>을 찍고</li>
+      <li>공유 메뉴에서 <strong>ScreenSolver</strong>를 고르면 자동으로 번역합니다</li>
+    </ol>
+    아래 버튼으로 스크린샷을 직접 불러올 수도 있습니다.
+    <br /><span class="muted small">화면을 켜 둔 채 <strong>실시간</strong>으로 번역하려면 ScreenSolver
     Android 앱이 필요합니다 (웹 브라우저는 폰 화면 캡처를 지원하지 않습니다).</span>
     <br /><a class="apk-link" href="dist/screensolver-debug.apk" download>📱 Android 앱 (APK) 내려받기</a>`,
   live: false,
@@ -253,7 +264,7 @@ const state = {
 
 /* ── 화면 테마 (§36) ───────────────────────────── */
 const THEME_ORDER = ['system', 'dark', 'light'];
-const THEME_ICON = { system: '⚙️', dark: '🌙', light: '☀️' };
+const THEME_ICON = { system: '🌗', dark: '🌙', light: '☀️' };
 const THEME_NAME = { system: '시스템 설정', dark: '다크', light: '라이트' };
 
 function applyTheme() {
@@ -2132,10 +2143,16 @@ function init() {
     cameraTab.title = '이 브라우저는 카메라를 지원하지 않습니다.';
   }
 
-  // 사용자가 고른 소스가 있으면 그대로, 없으면 기기에 맞는 소스를 자동 선택합니다.
-  // (폰은 바로 쓸 수 있는 카메라 — 화면 공유 탭은 스크린샷 안내로 남아 있습니다.)
+  // 사용자가 고른 소스가 있으면 그대로, 없으면 화면 공유부터 보여 줍니다.
+  //
+  // 화면 공유 탭은 어느 환경에서도 비어 있지 않습니다.
+  //   Android 앱  → MediaProjection 으로 폰 전체 화면 실시간 캡처
+  //   데스크톱 웹 → getDisplayMedia 로 탭·창·화면 공유
+  //   폰 브라우저 → 스크린샷 공유·불러오기 안내 + 앱 내려받기
+  // 그래서 앱과 웹이 같은 자리에서 시작하도록 기본값을 통일합니다.
+  // (예전에는 폰 웹에서 카메라로 건너뛰어, 같은 제품인데 다른 앱처럼 보였습니다.)
   const usable = (s) => SOURCES[s] && (s !== 'camera' || CAMERA_SUPPORTED);
-  const auto = SCREEN_SUPPORTED ? 'screen' : CAMERA_SUPPORTED ? 'camera' : 'photo';
+  const auto = 'screen';
   setSource(usable(settings.source) ? settings.source : auto, { silent: true });
 
   wireAndroidBridge();

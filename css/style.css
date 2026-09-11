@@ -879,3 +879,21 @@ body[data-view="steps"] .sol-section[data-key="concept"] { display: none; }
 @media (max-width: 940px) {
   .mode-tabs button { min-height: 44px; padding: 10px 14px; }
 }
+
+/*
+ * 캡처 영역은 어느 테마에서도 어둡게 유지합니다 (영상·스크린샷이 잘 보이도록).
+ * 그러면 라이트 테마에서는 안쪽 글자가 "어두운 배경 위 어두운 글자" 가 되어
+ * 읽을 수 없게 됩니다. 스테이지 안에서는 항상 밝은 글자색을 씁니다.
+ */
+.stage,
+.stage .stage-empty {
+  --text: #e6edf3;
+  --muted: #a9b7c6;
+  --accent: #6ea8fe;
+  --accent-2: #7ee0b8;
+  color: var(--text);
+}
+.stage .stage-empty strong,
+.stage .stage-empty .howto strong { color: #ffffff; }
+.stage .stage-empty em { color: #9fc3ff; }
+.stage .apk-link { color: var(--accent-2); }
