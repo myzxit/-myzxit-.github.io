@@ -1,0 +1,34 @@
+# ScreenSolver — Netlify 설정 (§67)
+#
+# 이 저장소는 빌드 단계가 없는 정적 사이트입니다(번들러 없이 ES 모듈을 그대로
+# 씁니다). 그래서 publish 는 저장소 루트이고 build command 는 없습니다.
+#
+# 서버 프록시(§2B)는 netlify/functions 의 함수 두 개로 동작합니다.
+# 환경변수가 하나도 없어도 함수는 정상 응답하며(configured 가 모두 false),
+# 사이트는 "직접 키 입력" 모드로 그대로 동작합니다.
+
+[build]
+  publish = "."
+  command = ""
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+# APK 는 서비스 워커가 캐시하지 않으며, 올바른 형식으로 내려가야 합니다.
+[[headers]]
+  for = "/dist/*.apk"
+  [headers.values]
+    Content-Type = "application/vnd.android.package-archive"
+    Cache-Control = "no-cache"
+
+# 정적 자산은 항상 최신을 쓰도록 합니다(서비스 워커가 따로 캐시합니다).
+[[headers]]
+  for = "/js/*"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/css/*"
+  [headers.values]
+    Cache-Control = "no-cache"
